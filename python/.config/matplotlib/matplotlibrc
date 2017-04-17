@@ -1,0 +1,48 @@
+backend                     : TkAgg
+interactive                 : True
+text.usetex                 : True
+text.latex.unicode          : True
+mathtext.fontset            : cm
+axes.formatter.use_mathtext : True
+lines.linewidth             : 0.8
+font.size                   : 5
+axes.labelpad               : 1.0
+axes.labelsize              : small
+xtick.labelsize             : xx-small
+ytick.labelsize             : xx-small
+axes.titlesize              : medium
+axes.spines.right           : False
+axes.spines.top             : False
+axes.edgecolor              : 606060
+axes.linewidth              : 0.4
+axes.axisbelow              : True
+axes.xmargin                : 0.0
+axes.ymargin                : 0.0
+grid.alpha                  : 0.35
+legend.edgecolor            : 0.0
+xtick.color                 : 606060
+ytick.color                 : 404040
+xtick.major.width           : 0.5
+ytick.major.width           : 0.5
+xtick.minor.width           : 0.3
+ytick.minor.width           : 0.3
+xtick.major.size            : 2.1
+ytick.major.size            : 2.1
+xtick.minor.size            : 1.2
+ytick.minor.size            : 1.2
+xtick.direction             : in
+ytick.direction             : in
+xtick.minor.visible         : True
+ytick.minor.visible         : True
+axes.titlepad               : 1.0
+grid.color                  : 000000
+grid.linestyle              : dashed
+grid.linewidth              : 0.05
+axes.grid                   : True
+figure.dpi                  : 300
+savefig.transparent         : True
+figure.autolayout           : True
+font.serif                  : computer modern roman
+font.cursive                : computer modern roman
+font.monospace              : computer modern typewriter
+font.sans-serif             : computer modern sans serif

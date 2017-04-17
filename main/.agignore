@@ -1,0 +1,17 @@
+.git
+.svn
+.hg
+.DS_Store
+
+node_modules
+__pycache__
+
+*.pyc
+
+*.png
+*.bmp
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.gif

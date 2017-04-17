@@ -1,0 +1,82 @@
+# -*- coding: utf-8 -*-
+# vim:filetype=python
+
+"""Startup config for interactive python."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
+
+import os, sys
+
+
+USER = os.path.expanduser('~')
+sys.path.insert(0, USER + '/.ptpython/')
+CONFIG_DIR = USER + '/.ptpython/'
+
+try:
+  __PTPYTHON__ = True
+  from ptpython.repl import embed
+except ImportError:
+  __PTPYTHON__ = False
+
+if sys.argv[0].find('ipython') != -1:
+  __IPYTHON__ = True
+
+try:
+  __IPYTHON__
+  __IPYTHON__ = True
+except NameError:
+  __IPYTHON__ = False
+
+
+if not __IPYTHON__:
+  class clear(object):
+    def __repr__(self):
+      self.__call__()
+      return '      '
+
+    def __call__(self):
+      os.system('clear')
+
+  class pwd(object):
+    def __repr__(self):
+      return os.getcwd()
+
+    def __call__(self):
+      return os.getcwd()
+
+
+  if not __PTPYTHON__:
+    class exit(object):
+      def __call__(self):
+        raise SystemExit
+
+      def __repr__(self):
+        raise SystemExit
+
+  else:
+    class exit(object):
+      def __call__(self):
+        raise SystemExit
+
+      def __repr__(self):
+        raise SystemExit
+
+  quit = exit = exit()
+  clear = clear(); pwd = pwd()
+
+
+if __PTPYTHON__ and not __IPYTHON__ and os.isatty(0):
+  from config import configure
+
+  globals_table = {
+    'exit': exit,
+    'quit': quit,
+    'pwd': pwd,
+    'clear': clear,
+  }
+
+  sys.exit(embed(configure=configure, globals=globals_table,
+                 history_filename=CONFIG_DIR + 'history'))

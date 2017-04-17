@@ -1,0 +1,75 @@
+MenuBar=Disabled
+State=AAAA/wAAAAD9AAAAAwAAAAAAAAEBAAACYvwCAAAAAvsAAAAWAGYAbwBsAGQAZQByAHMARABvAGMAawEAAAAmAAACYgAAAFABAAAD+wAAABQAcABsAGEAYwBlAHMARABvAGMAawAAAAAmAAADLwAAAAoBAAADAAAAAQAAAO8AAAJi/AIAAAAB+wAAABAAaQBuAGYAbwBEAG8AYwBrAQAAACYAAAJiAAABAwEAAAMAAAADAAAHgAAAAXH8AQAAAAH7AAAAGAB0AGUAcgBtAGkAbgBhAGwARABvAGMAawEAAAAAAAAHgAAAAAoBAAADAAAFjgAAAmIAAAAEAAAABAAAAAgAAAAI/AAAAAEAAAACAAAAAQAAABYAbQBhAGkAbgBUAG8AbwBsAEIAYQByAQAAAAD/////AAAAAAAAAAA=
+Window-Maximized 1080x1920=true
+
+[AdditionalInfoDialog]
+Height 1080=294
+Width 1920=300
+
+[CompactMode]
+FontWeight=50
+
+[Desktop Entry]
+DefaultProfile=Main.profile
+
+[DetailsMode]
+FontWeight=50
+
+[DownloadDialog Settings]
+Height 1080=517
+Width 1920=700
+
+[Favorite Profiles]
+Favorites=
+
+[FileMetaDataConfigurationDialog]
+Height 1080=304
+Width 1920=288
+
+[General]
+BrowseThroughArchives=true
+ConfirmClosingMultipleTabs=false
+EditableUrl=true
+GlobalViewProps=true
+LockPanels=true
+ShowFullPath=true
+SplitView=true
+Version=200
+ViewPropsTimestamp=2015,8,21,14,47,14
+
+[IconsMode]
+FontWeight=50
+IconSize=48
+PreviewSize=128
+
+[KPropertiesDialog]
+Height 1080=494
+Width 1920=646
+
+[MainWindow]
+Height 1080=1035
+Height 1200=480
+MenuBar=Disabled
+State=AAAA/wAAAAD9AAAAAwAAAAAAAADBAAADNvwCAAAAAvsAAAAWAGYAbwBsAGQAZQByAHMARABvAGMAawEAAAAAAAAB8wAAAFoBAAAD+wAAABQAcABsAGEAYwBlAHMARABvAGMAawEAAAH0AAABQgAAAFoBAAADAAAAAQAAAOQAAAM2/AIAAAAB+wAAABAAaQBuAGYAbwBEAG8AYwBrAQAAAAAAAAM2AAABDAEAAAMAAAADAAAHgAAAAQH8AQAAAAH7AAAAGAB0AGUAcgBtAGkAbgBhAGwARABvAGMAawEAAAAAAAAHgAAAAAoBAAADAAAF2QAAAzYAAAAEAAAABAAAAAgAAAAI/AAAAAEAAAACAAAAAQAAABYAbQBhAGkAbgBUAG8AbwBsAEIAYQByAAAAAAD/////AAAAAAAAAAA=
+ToolBarsMovable=Disabled
+Width 1920=1306
+Window-Maximized 1080x1920=true
+
+[Notification Messages]
+ConfirmDelete=true
+ConfirmTrash=true
+
+[Open-with settings]
+CompletionMode=5
+History=okular,smplayer,"/home/yury/.cxoffice/MSOffice2013/desktopdata/cxmenu/StartMenu.C^5E3A_users_crossover_Start^2BMenu/Programs/Microsoft+Office+2013/Word+2013.lnk" %u,"/home/yury/.cxoffice/MSOffice2013/desktopdata/cxmenu/StartMenu.C^5E3A_users_crossover_Start^2BMenu/Programs/Microsoft+Office+2013/PowerPoint+2013.lnk" %u,/usr/bin/qbittorrent
+
+[PreviewSettings]
+Plugins=imagethumbnail,jpegthumbnail,svgthumbnail
+
+[SettingsDialog]
+Height 1080=493
+Width 1920=520
+
+[ViewPropertiesDialog]
+Height 1080=294
+Width 1920=361

@@ -1,0 +1,36 @@
+set editing-mode vi
+
+# Punctuation delimiters
+set bind-tty-special-chars off
+
+# Completion
+set page-completions on
+set completion-ignore-case on
+set completion-query-items 200
+set show-all-if-ambiguous on
+set show-all-if-unmodified on
+set visible-stats on
+
+# keymap
+set keymap vi
+
+# sounds off
+set bell-style none
+
+# UTF-8
+set meta-flag on
+set input-meta on
+set output-meta on
+set convert-meta off
+
+$if Bash
+$endif
+
+$if Python
+$endif
+
+$if mode=vi
+    set keymap vi-command
+    "0": end-of-line
+    "-": beginning-of-line
+$endif

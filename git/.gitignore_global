@@ -1,0 +1,68 @@
+# Compiled source #
+###################
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Logs and databases #
+######################
+*.sqlite
+*.out
+
+# Generated files #
+######################
+.DS_Store
+.DS_Store?
+*.DS_Store
+._*
+.Trashes
+Icon?
+ehthumbs.db
+Thumbs.db
+
+# python
+__pycache__
+*.pyg
+*.pyc
+
+# Vim
+*~
+*swp
+.ctags
+compile_commands.json
+
+
+# Latex
+*.aux
+*.glo
+*.idx
+*.toc
+*.ist
+*.acn
+*.acr
+*.alg
+*.bbl
+*.blg
+*.glg
+*.gls
+*.ilg
+*.ind
+*.lof
+*.lot
+*.maf
+*.mtc
+*.mtc1
+*.out
+*.fdb_latexmk
+*.fls
+*.brf
+*.synctex.gz
+
+# gdb #
+.gdb_history
+
+# node #
+node_modules

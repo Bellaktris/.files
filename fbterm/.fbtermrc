@@ -1,0 +1,14 @@
+screen-rotate=0
+font-size=21
+
+cursor-shape=1
+cursor-interval=0
+
+word-chars=._-
+
+history-lines=1000
+
+color-foreground=7
+color-background=0
+
+text-encodings=utf-8

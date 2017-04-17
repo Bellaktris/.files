@@ -1,0 +1,3 @@
+#!/usr/bin/env zsh
+memcpu="$(tmux-mem-cpu-load | cut -f 1 -d %)"
+echo "${${${memcpu//|/▪}/\//∕}/MB / MB · }"

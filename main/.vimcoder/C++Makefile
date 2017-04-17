@@ -1,0 +1,22 @@
+CXX      = clang++
+CXXFLAGS = -O2 -std=c++11
+
+
+ifeq ($(OS),Windows_NT)
+EXEEXT = .exe
+endif
+
+
+all: driver$(EXEEXT)
+
+clean: rm -f driver$(EXEEXT)
+
+test: all
+	./driver$(EXEEXT) --abort-on-fail
+
+%$(EXEEXT): %.cc
+	$(LINK.cc) $^ $(LOADLIBES) $(LDLIBS) -o $@
+
+driver$(EXEEXT): $CLASSNAME$.cc
+
+.PHONY: all clean test

@@ -1,0 +1,82 @@
+# vim: syntax=config:foldmethod=marker
+# vim: foldmarker={{{,}}}:foldenable
+
+# General {{{
+pause
+keep-open
+fs
+stop-screensaver=yes
+# }}}
+
+# Performance {{{
+profile=opengl-hq
+# interpolation
+# tscale=oversample
+
+# scale=ewa_lanczossharp
+# cscale=ewa_lanczossharp
+# video-sync=display-resample
+
+hwdec=vaapi
+hwdec-codecs=all
+# }}}
+
+# Audio {{{
+volume=100
+volume-max=500
+af=acompressor
+# }}}
+
+# Screenshots {{{
+screenshot-jpeg-quality=95
+screenshot-format=jpeg
+screenshot-template="~/screenshots/%F %P"
+# }}}
+
+# Youtube {{{
+hls-bitrate=max
+ytdl-raw-options=format="(bestvideo+bestaudio[height>=?1080]/best)[protocol!=rtmp]"
+# }}}
+
+# Tui {{{
+msg-module
+msg-color
+term-osd-bar
+# }}}
+
+# Gui {{{
+no-border
+no-osc
+osd-bar-align-y=0
+osd-font='Monaco'
+osd-color='#FFFF00'
+osd-border-color='#000000'
+osd-border-size=1
+# }}}
+
+# Subtitles {{{
+slang=ru,en,eng
+alang=ru,en,eng
+
+no-sub-visibility
+
+demuxer-mkv-subtitle-preroll
+sub-auto=fuzzy
+sub-file-paths=ass:srt:sub:subs:subtitles
+embeddedfonts=yes
+sub-fix-timing=no
+sub-ass-force-style=Kerning=yes
+
+# sub-codepage=uchardet
+
+sub-font="Monaco"
+sub-font-size=52
+sub-color="#FFFFFF00"
+sub-border-color="#FF000000"
+sub-border-size=2
+# }}}
+
+# External audio {{{
+audio-file-auto=fuzzy
+audio-pitch-correction=yes
+# }}}

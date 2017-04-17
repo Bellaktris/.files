@@ -1,0 +1,46 @@
+#!/bin/bash
+
+command -v tmux &>/dev/null || { echo "Install tmux first.." && exit 0; }
+command -v gdb  &>/dev/null || { echo "Install gdb first.."  && exit 0; }
+command -v nvim &>/dev/null || { echo "Install nvim first.."  && exit 0; }
+
+[[ -z "$TMUX" ]] && \
+  { echo "This script is meant to be used with a single full-screen tmux pane.." && exit 0; }
+
+[[ "$(tmux list-panes | wc -l)" != "1" ]] && \
+  { echo "This script is meant to be used with a single full-screen tmux pane.." && exit 0; }
+
+mkdir -p "/tmp/gdb-tmux"
+
+GDB_TEMP_FILE="$(mktemp --tmpdir=/tmp/gdb-tmux sourcelink.XXXXXX)"
+
+tmux split-window -t 0 -h -d "cat | less -Q -n +F"
+tmux resize-pane -t 0 -x 85
+
+xtty0="$(tmux list-panes -F "#{pane_id} #{pane_tty}" | cut -c 1- | sort -k1,1 -n | tail -n 1 | cut -f 2 -d ' ')"
+
+tmux split-window -b -t 0 -d "nvim -R -c \"set ft=gdbsource.cpp\" $GDB_TEMP_FILE"
+
+xtty1="$(tmux list-panes -F "#{pane_id} #{pane_tty}" | cut -c 1- | sort -k1,1 -n | tail -n 1 | cut -f 2 -d ' ')"
+
+# tmux split-window -t 2 -b -d "cat | less -Q -n +F"
+# tmux resize-pane -t 3 -y 10
+
+# xtty2="$(tmux list-panes -F "#{pane_id} #{pane_tty}" | cut -c 1- | sort -k1,1 -n | tail -n 1 | cut -f 2 -d ' ')"
+
+sleep 0.7 && tmux resize-pane -t 1 -y 10
+
+GDB_CMD="gdb -quiet -ex 'break main'                               \
+  -ex 'dashboard -layout sourcefile expressionsv2'                 \
+  -ex 'dashboard -output /dev/null'                                \
+  -ex 'dashboard sourcefile -output /dev/null'                     \
+  -ex 'dashboard sourcefile -style output_path \"$GDB_TEMP_FILE\"' \
+  -ex 'dashboard expressionsv2 -output $xtty0' -ex 'shell clear' --args '$@'"
+
+# eval "nvim -c \"terminal $GDB_CMD\" -c \"split '$GDB_TEMP_FILE'\" -c 'set ft=gdbsource.cpp'"
+
+eval "$GDB_CMD"; unset GDB_CMD
+unset xtty{0,1}
+rm -f "$GDB_TEMP_FILE" "$GDB_TEMP_FILE.data" "$GDB_TEMP_FILE.none" && unset GDB_TEMP_FILE
+
+tmux kill-pane -a -t 1 && clear

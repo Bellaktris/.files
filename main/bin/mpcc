@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+# -*- coding: <utf-8> -*-
+
+"""Extended music player daemon client."""
+
+
+import re
+import os
+import shutil
+import sys
+import copy
+
+from subprocess import Popen
+from subprocess import PIPE
+from subprocess import check_output
+
+from mpd import MPDClient
+
+from functools import partial
+
+client = MPDClient()
+client.connect("localhost", 6600)
+
+client.iterate = True
+
+def toggle():
+    if client.status()['state'] == 'pause':
+        client.setstate(0)
+    else:
+        client.setstate(1)
+
+
+def getposition():
+    return int(client.currentsong().get('pos', -1))
+
+def printposition():
+    print(getposition() + 1)
+
+client.prev = client.previous
+client.toggle = toggle
+client.setstate = client.pause
+client.pause = partial(client.pause, 1)
+client.getposition = printposition
+
+
+class MpdException(Exception):
+    def __init__(self, value):
+        self.value = value
+    def __str__(self):
+        return "\033[31mMpdException:\033[0m %s" % repr(self.value)[1:-1]
+
+
+maxwidth = {
+    'pos': '%4d',
+    'artist': '%-36s',
+    'file': '%-75s',
+    'title': '%-48s'
+}
+
+def pretify(_song, tags):
+    """Extract tags from song info and justify."""
+    song = copy.deepcopy(_song)
+
+    if 'pos' in song:
+        song['pos'] = int(song['pos']) + 1
+
+    for tag in tags:
+        if tag not in song:
+            song[tag] = "None"
+
+    if song['artist'] == 'None':
+        if 'album' in song:
+            song['artist'] = song['album']
+
+    formatstring = ' '.join([maxwidth[tag] for tag in tags])
+    return formatstring % tuple((song[tag] for tag in tags))
+
+
+def selectsongs(listtype, tags, query, fake=False):
+    """Return list of selected songs."""
+
+    if listtype == 'database':
+        songs = list(client.listallinfo())
+    if listtype == 'playlist':
+        songs = list(client.playlistinfo())
+
+    numpattern = '(\d+|\d+-\d+)(\s*,\d+|\s*,\d+-\d+)*'
+
+    if not fake and query in ['all', 'deep', 'shallow']:
+        result = songs
+        if query == 'shallow':
+            result = []
+
+            for song in songs:
+                if 'file' in song and '/' not in song['file']:
+                    result += [song]
+
+        return result
+
+    elif not fake and re.match(numpattern, query) is not None:
+        ranges = [i.strip().split('-') for i in query.split(',')]
+
+        positions = []
+        for i in ranges:
+            if len(i) == 1:
+                positions += [int(i[0])]
+            else:
+                if int(i[0]) > int(i[1]):
+                    raise MpdException('wrong range')
+
+                positions += list(range(int(i[0]), int(i[1]) + 1))
+
+        positions = sorted(set(positions))
+        songs.sort(key=lambda song: int(song['pos']))
+
+        result = []
+        for i in positions:
+            result += [songs[i - 1]]
+
+        return result
+
+    else:
+        selectfrom = {}
+        for i, song in enumerate(songs):
+            try:
+                key = pretify(song, tags)
+                selectfrom[key] = selectfrom.get(key, []) + [i]
+            except KeyError:
+                pass
+
+        stdin = '\n'.join(sorted(selectfrom.keys()))
+
+        if shutil.which('fzf-tmux') is None:
+            raise MpdException('fzf not found')
+
+        cmdline = 'fzf-tmux -d 80% ' if not fake else 'fzf '
+        cmdline += '--ansi --select-1 --exit-0 '
+        cmdline += '--tiebreak=begin,length '
+        cmdline += '--bind=ctrl-a:toggle-all '
+        cmdline += '-i -m --delimiter=" " --nth=".." '
+
+        if not fake:
+            cmdline += '--query="' + query + '"'
+        else:
+            stdin = re.sub('  +','\n',stdin)
+            cmdline += '--filter="' + query + '"'
+
+        stdout, _ = Popen(cmdline, stdin=PIPE, stdout=PIPE, shell=True)\
+                .communicate(input=stdin.encode('utf8'))
+
+        if fake:
+            stdout = reversed(stdout.decode('utf-8').splitlines())
+            print('\n'.join([line.strip() for line in stdout]))
+            quit()
+
+        if stdout.decode('utf-8') == '':
+            raise MpdException('empty selection')
+
+        selections = stdout.decode('utf-8').splitlines()
+        result = []
+
+        for selection in selections:
+            for i in selectfrom[selection]:
+                if query == 'shallow' and '/' in songs[i]['file']:
+                    continue
+
+                result += [songs[i]]
+
+        return result
+
+
+def add(tags, query, fakeselect=False):
+    """Add selected songs into playlist."""
+    songs = selectsongs('database', tags, query, fakeselect)
+    for song in songs:
+        if 'file' in song:
+            client.add(song['file'])
+
+    getattr(client, "shuffle", None)()
+
+def remove(tags, query, fakeselect=False):
+    """Remove selected songs from playlist."""
+    songs = selectsongs('playlist', tags, query, fakeselect)
+    for song in songs:
+        if 'id' in song:
+            client.deleteid(int(song['id']))
+
+
+def push(tags, query, fakeselect=False):
+    """Queue selected songs."""
+    songs = selectsongs('playlist', tags, query, fakeselect)
+
+    for song in songs:
+        if int(song['pos']) > getposition():
+            client.moveid(song['id'], getposition() + 1)
+        elif int(song['pos']) < getposition():
+            client.moveid(song['id'], getposition())
+
+    return len(songs)
+
+
+queue = push
+
+
+def pop(tags, query, fakeselect=False):
+    """Queue selected songs."""
+    length = push(tags, query, fakeselect)
+    currentsong = client.currentsong()
+    where = int(currentsong['pos']) + length
+
+    client.moveid(int(currentsong['id']), where)
+
+
+def play(tags, query, fakeselect=False):
+    """Queue selected songs and play first of them."""
+    try:
+        push(tags, query, fakeselect)
+    except MpdException as e:
+        if repr(e) != "MpdException('empty selection',)":
+            raise e
+
+        if client.status()['state'] == 'pause':
+            client.setstate(0)
+
+        quit()
+    client.play(getposition() + 1)
+
+
+def printlist(N=10):
+    """List N around the current position."""
+    songs = client.playlistinfo()
+
+    tags = ('pos', 'artist', 'title')
+    lines = [pretify(song, tags) for song in songs]
+
+    if len(lines) == 0:
+        print('I have an empty list.')
+        quit()
+
+    command = ['tmux', 'display', '-p', '"#{pane_width}"']
+    width = int(check_output(command).decode('utf-8')[1:-2])
+
+    currentsong = client.currentsong()
+    if 'pos' in currentsong:
+        position = int(currentsong['pos'])
+    else:
+        position = -1
+
+    def wrapline(line, width):
+        if len(line) < width:
+            return line
+
+        return line[:width - 3] + ' ..'
+
+    lines = [wrapline(line.rstrip(), width) for line in lines]
+    lines[position] = '\033[32m' + lines[position] + '\033[0m'
+
+    start = max(position - N//3, 0)
+    end = min(position + N, len(lines))
+    lines = reversed(lines[start:end])
+
+    print('\n'.join(lines))
+
+
+def printhelp():
+    """Print help message."""
+    helpmessage = """
+    \033[36musage: mpc <command> [<arguments>]\033[0m
+
+    \033[36mcommands:\033[0m
+         \033[36madd <query>\033[0m
+              Open  interactive  selection  from  mpd  database  starting  with
+              <query>  and  add  the  result   to  mpd  playlist  You  can  use
+              special <query>="artist  <query>" to choose from  artist list Use
+              <query>=all to select every song.
+
+         \033[36minsert <query>\033[0m
+              Same as  add, but  insert selection  after the  currently playing
+              song. You can use special <query>="artist <query>" to choose from
+              the artist list.
+
+         \033[36mremove <query>\033[0m
+              Same as  add, but  insert selection  after the  currently playing
+              song You can use special  <query>="artist <query>" to choose from
+              the artist list.
+
+         \033[36mpush <query>\033[0m
+              Open  interactive  selection  from  mpd  playlist  starting  with
+              <query> and add the result  after currently playing song. You can
+              use special  <query>="artist <query>"  to choose from  the artist
+              list.
+
+         \033[36mplay <song>\033[0m
+              Start playing  from <song>, <song> can  be number or part  of the
+              name. The default value is 1.
+
+         \033[36mlist\033[0m
+              Show 9 items from playlist around the currently playing song.
+
+    And you  can use  any command  that original  mpc support  and that  is not
+    redefined here."""
+    print(helpmessage + '\n')
+
+
+def parseinput(argv, tagdict):
+    """Parse input arguments and assign tags and query variables."""
+    if len(argv) > 0 and argv[0] in tagdict:
+        return (argv[0],), ' '.join(argv[1:])
+    return ('artist', 'title'), ' '.join(argv)
+
+
+def unsupported_command():
+    raise MpdException("unsupported command")
+
+
+def main():
+    """Main function to assist multithreading."""
+    if len(sys.argv) == 1:
+        printlist()
+        quit()
+
+    if sys.argv[1] == 'help':
+        printhelp()
+        quit()
+
+    fakeselect = False
+    tagdict = {'artist': True}
+
+    if sys.argv[1] == 'zshcomplete':
+        fakeselect = True
+        sys.argv.remove('zshcomplete')
+
+    if sys.argv[1] == 'list':
+        if len(sys.argv) <= 2:
+            printlist()
+        else:
+            printlist(int(sys.argv[2]))
+
+        quit()
+
+    if sys.argv[1] in ['add', 'remove', 'queue', 'push', 'pop', 'play']:
+        func = getattr(sys.modules[__name__], sys.argv[1])
+        func(*parseinput(sys.argv[2:], tagdict), fakeselect=fakeselect)
+
+    else:
+        getattr(client, sys.argv[1], unsupported_command)()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except MpdException as exception:
+        print(exception)
