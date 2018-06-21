@@ -10,37 +10,49 @@ command -v nvim &>/dev/null || { echo "Install nvim first.."  && exit 0; }
 [[ "$(tmux list-panes | wc -l)" != "1" ]] && \
   { echo "This script is meant to be used with a single full-screen tmux pane.." && exit 0; }
 
-mkdir -p "/tmp/gdb-tmux"
+get_pane_info() {
+  tmux list-panes -F '#{pane_id} #{pane_tty}' \
+    | cut -c 2- | sort -k1,1 -n | head -$1 | tail -n 1
+}
 
-GDB_TEMP_FILE="$(mktemp --tmpdir=/tmp/gdb-tmux sourcelink.XXXXXX)"
+get_pane_id() { get_pane_info $1 | cut -f 1 -d ' '; }
 
-tmux split-window -t 0 -h -d "cat | less -Q -n +F"
-tmux resize-pane -t 0 -x 85
+get_pane_tty() { get_pane_info $1 | cut -f 2 -d ' '; }
 
-xtty0="$(tmux list-panes -F "#{pane_id} #{pane_tty}" | cut -c 1- | sort -k1,1 -n | tail -n 1 | cut -f 2 -d ' ')"
+GDB_TEMP_FILE="$(mkdir -p "/tmp/gdb-tmux" && mktemp --tmpdir=/tmp/gdb-tmux sourcelink.XXXXXX)"
 
-tmux split-window -b -t 0 -d "nvim -R -c \"set ft=gdbsource.cpp\" $GDB_TEMP_FILE"
+pane_id_gdb="$(get_pane_id 1)"
 
-xtty1="$(tmux list-panes -F "#{pane_id} #{pane_tty}" | cut -c 1- | sort -k1,1 -n | tail -n 1 | cut -f 2 -d ' ')"
+tmux split-window -t "${pane_id_gdb}" -h -d "cat | less -Q -n +F"
+tmux resize-pane -t "${pane_id_gdb}" -x 85
 
-# tmux split-window -t 2 -b -d "cat | less -Q -n +F"
-# tmux resize-pane -t 3 -y 10
+tmux split-window -b -t "${pane_id_gdb}" -d "GDBSOURCE_PANE_ID=${pane_id_gdb} nvim -R -c \"set ft=gdbsource.cpp\" $GDB_TEMP_FILE"
 
-# xtty2="$(tmux list-panes -F "#{pane_id} #{pane_tty}" | cut -c 1- | sort -k1,1 -n | tail -n 1 | cut -f 2 -d ' ')"
+pane_id_nvim="$(get_pane_id 2)"
+pane_id_right="$(get_pane_id 3)"
 
-sleep 0.7 && tmux resize-pane -t 1 -y 10
+pane_tty_gdb="$(get_pane_tty 1)"
+pane_tty_right="$(get_pane_tty 2)"
+pane_tty_nvim="$(get_pane_tty 3)"
+
+sleep 2.0 && tmux resize-pane -t "${pane_id_gdb}" -y 10
 
 GDB_CMD="gdb -quiet -ex 'break main'                               \
   -ex 'dashboard -layout sourcefile expressionsv2'                 \
   -ex 'dashboard -output /dev/null'                                \
   -ex 'dashboard sourcefile -output /dev/null'                     \
   -ex 'dashboard sourcefile -style output_path \"$GDB_TEMP_FILE\"' \
-  -ex 'dashboard expressionsv2 -output $xtty0' -ex 'shell clear' --args '$@'"
+  -ex 'dashboard expressionsv2 -output ${pane_tty_right}' --args $@"
 
-# eval "nvim -c \"terminal $GDB_CMD\" -c \"split '$GDB_TEMP_FILE'\" -c 'set ft=gdbsource.cpp'"
+eval "$GDB_CMD"
+tmux kill-pane -a -t "$(get_pane_id 0)"
 
-eval "$GDB_CMD"; unset GDB_CMD
-unset xtty{0,1}
-rm -f "$GDB_TEMP_FILE" "$GDB_TEMP_FILE.data" "$GDB_TEMP_FILE.none" && unset GDB_TEMP_FILE
+rm -f "$GDB_TEMP_FILE" "$GDB_TEMP_FILE.data" "$GDB_TEMP_FILE.none"
 
-tmux kill-pane -a -t 1 && clear
+unset GDB_TEMP_FILE
+
+clear
+
+unset GDB_CMD
+unset pane_tty_{nvim,right,gdb}
+unset pane_id{nvim,right,gdb}

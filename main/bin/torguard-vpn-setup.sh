@@ -8,8 +8,16 @@ fi
 ufw disable &>/dev/null
 service openvpn stop &>/dev/null
 
-serverip=$(dig +short ${1:-ca.torguardvpnaccess.com})
-[[ -z $serverip ]] && serverip=${1:-ca.torguardvpnaccess.com}
+TIMEZONE=$(( $(date +"%z") / 100 ))
+
+if $(( $TIMEZONE >= -7 && $TIMEZONE <= -4 ))
+then
+  serverip=$(dig +short ${1:-ca.torguardvpnaccess.com})
+  [[ -z $serverip ]] && serverip=${1:-ca.torguardvpnaccess.com}
+else
+  serverip=$(dig +short ${1:-swiss.torguardvpnaccess.com})
+  [[ -z $serverip ]] && serverip=${1:-swiss.torguardvpnaccess.com}
+fi  # $(( $TIMEZONE >= -7 && $TIMEZONE <= -4 ))
 
 read -d '' vpnconf <<- EOF
 client
@@ -65,14 +73,14 @@ ipv4_2=("192.168.0.0/16" "10.0.0.0/8" "172.16.0.0/12")
 
 ipv6=("::1/128" "fe80::/10" "fc00::/7" "ff00::/8")
 
-for address1 in ${ipv4_1} ${ipv4_2}; do
-for address2 in ${ipv4_1} ${ipv4_2}; do
+for address1 in ${ipv4_1[@]} ${ipv4_2[@]}; do
+for address2 in ${ipv4_1[@]} ${ipv4_2[@]}; do
   ufw allow in  from ${address1} to ${address2} &>/dev/null
   ufw allow out from ${address1} to ${address2} &>/dev/null
 done; done;
 
-for address1 in ${ipv6}; do
-for address2 in ${ipv6}; do
+for address1 in ${ipv6[@]}; do
+for address2 in ${ipv6[@]}; do
   ufw allow in  from ${address1} to ${address2} &>/dev/null
   ufw allow out from ${address1} to ${address2} &>/dev/null
 done; done;
