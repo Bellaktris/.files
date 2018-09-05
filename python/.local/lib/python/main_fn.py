@@ -1,4 +1,4 @@
-"""Saliency modeling, Facebook, 2018."""
+"""Main function decoratorations."""
 
 from __future__ import absolute_import
 from __future__ import division
@@ -57,10 +57,13 @@ def with_logging(decorated_function):
     """Wraps function call with logging init."""
 
     logger = logging.getLogger()
-    logging.getLogger().setLevel(logging.DEBUG)
 
-    logger.addHandler(logging.StreamHandler())
+    if len(logger.handlers) == 0:
+        logger.addHandler(logging.StreamHandler())
+
+    logging.getLogger().setLevel(logging.DEBUG)
     logger.handlers[-1].setLevel(logging.ERROR)
+
     return decorated_function()
 
 

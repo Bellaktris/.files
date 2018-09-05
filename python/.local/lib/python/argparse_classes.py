@@ -1,4 +1,4 @@
-"""Saliency modeling, Facebook, 2018."""
+"""Argparse argument types and extensions."""
 
 from __future__ import absolute_import
 from __future__ import division

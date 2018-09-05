@@ -1,13 +1,26 @@
 """Vapoursynth helper functions."""
 
-import ast, numpy as np, cv2
+import os, ast, itertools
 import vapoursynth as vs
+import numpy as np, cv2
+
+try:
+    no_ximgproc = False
+    import cv2.ximgproc
+except ImportError:
+    no_ximgproc = True
+
+try:
+    no_videostab = False
+    import cv2.videostab
+except ImportError:
+    no_videostab = True
 
 core = vs.get_core()
 
 matrices = {
-    'matrix_in_s': '470bg',
-    'matrix_s': '470bg',
+    'matrix_in_s': '709',
+    'matrix_s': '709',
 }
 
 
@@ -17,31 +30,66 @@ class v(ast.NodeVisitor):
     def __init__(self):
         self.tokens = []
 
+    def visit(self, expr):
+        super(v, self).visit(expr)
+        return self.tokens
+
     def visit_BoolOp(self, node):
         for val in node.values:
             self.visit(val)
         self.visit(node.op)
 
-    def visit_And(self, node):
-        self.tokens.append('and')
-        super(v, self).generic_visit(node)
-
-    def visit_Or(self, node):
-        self.tokens.append('or')
-        super(v, self).generic_visit(node)
+    def visit_IfExp(self, node):
+        self.visit(node.test)
+        self.visit(node.body)
+        self.visit(node.orelse)
+        self.tokens.append('?')
 
     def visit_Call(self, node):
         for arg in node.args:
             self.visit(arg)
         self.visit(node.func)
 
+    def visit_UnaryOp(self, node):
+        self.visit(node.operand)
+        self.visit(node.op)
+
     def visit_BinOp(self, node):
         self.visit(node.left)
         self.visit(node.right)
         self.visit(node.op)
 
+    def visit_Compare(self, node):
+        self.visit(node.left)
+        self.visit(node.comparators[0])
+        self.visit(node.ops[0])
+
+        args, ops =           \
+            node.comparators, \
+            node.ops[1:]
+
+        args = zip(args[:-1], args[1:])
+
+        for O, (A, B) in zip(ops, args):
+            self.visit(A)
+            self.visit(B)
+            self.visit(O)
+            self.tokens.append('and')
+
     def visit_Add(self, node):
         self.tokens.append('+')
+        super(v, self).generic_visit(node)
+
+    def visit_UAdd(self, node):
+        self.tokens.append('+')
+        super(v, self).generic_visit(node)
+
+    def visit_Sub(self, node):
+        self.tokens.append('-')
+        super(v, self).generic_visit(node)
+
+    def visit_USub(self, node):
+        self.tokens.append('-')
         super(v, self).generic_visit(node)
 
     def visit_Div(self, node):
@@ -52,31 +100,40 @@ class v(ast.NodeVisitor):
         self.tokens.append('*')
         super(v, self).generic_visit(node)
 
-    def visit_CmpOp(self, node):
-        self.visit(node.left)
-        self.visit(node.right)
-        self.visit(node.op)
-
     def visit_Eq(self, node):
-        self.tokens.append('=')
+        self.tokens.append("=")
         super(v, self).generic_visit(node)
 
     def visit_Lt(self, node):
-        self.tokens.append('<')
+        self.tokens.append("<")
         super(v, self).generic_visit(node)
 
     def visit_Gt(self, node):
-        self.tokens.append('>')
+        self.tokens.append(">")
         super(v, self).generic_visit(node)
 
     def visit_LtE(self, node):
-        self.tokens.append('<=')
+        self.tokens.append("<=")
         super(v, self).generic_visit(node)
 
     def visit_GtE(self, node):
-        self.tokens.append('>=')
+        self.tokens.append(">=")
+        super(v, self).generic_visit(node)
 
-    def visit_Expr(self, node):
+    def visit_Or(self, node):
+        self.tokens.append('or')
+        super(v, self).generic_visit(node)
+
+    def visit_And(self, node):
+        self.tokens.append('and')
+        super(v, self).generic_visit(node)
+
+    def visit_BitXor(self, node):
+        self.tokens.append('xor')
+        super(v, self).generic_visit(node)
+
+    def visit_Not(self, node):
+        self.tokens.append('not')
         super(v, self).generic_visit(node)
 
     def visit_Name(self, node):
@@ -87,10 +144,24 @@ class v(ast.NodeVisitor):
         self.tokens.append(str(node.n))
         super(v, self).generic_visit(node)
 
+    def visit_Expr(self, node):
+        super(v, self).generic_visit(node)
 
-def Yuv2RGB(video):
-    """Converts input video to RGB24."""
-    kw = {'matrix_in_s': '470bg', 'format': vs.RGB24}
+
+def input_array(frame):
+    """Wraps frame into read-only numpy array."""
+    assert frame.format.id in [vs.RGBS, vs.GRAYS]
+
+    if frame.format.id == vs.GRAYS:
+        return np.asarray(frame.get_read_array(0))
+
+    f2np = lambda i: np.asarray(frame.get_read_array(i))
+    return cv2.merge([f2np(i) for i in (0, 1, 2)])
+
+
+def Yuv2RGBS(video):
+    """Converts input video to RGBS."""
+    kw = {'matrix_in_s': '709', 'format': vs.RGBS}
     return core.resize.Bilinear(video, **kw)
 
 
@@ -137,14 +208,14 @@ def SmartStack(clips):
     heights = [clip.height for clip in clips]
     widths = [clip.width for clip in clips]
 
+    for i in range(len(clips)):
+        kw = {'format': vs.YUV420P8, **matrices}
+        clips[i] = core.resize.Bilinear(clips[i], **kw)
+
     stack_clips = [None] * (3 * len(clips) - 2)
 
     diff_heights = max(heights) - min(heights)
     diff_widths = max(widths) - min(widths)
-
-    for i in range(len(clips)):
-        kw = {'format': vs.YUV420P8, 'matrix_in_s': '470bg'}
-        clips[i] = core.resize.Bilinear(clips[i], **kw)
 
     if diff_heights < diff_widths + 10:
         separators = [
@@ -223,6 +294,36 @@ def ComputeMotion(clip, *args, **kwargs):
     return clip, (hvecs, vvecs, sads)
 
 
+def AvsScale(video, width):
+    """Scale to a new width."""
+    height = video.height * width // video.width
+    kwargs = {'width': width, 'height': height}
+    return core.resize.Bicubic(video, **kwargs)
+
+
+def Expr(clips, expr, **kwargs):
+    """Wrapper for VapourSynth Expr function."""
+    expr = ' '.join(v().visit(ast.parse(expr)))
+    return core.std.Expr(clips, expr, **kwargs)
+
+
+def Variance(clip, rad=7):
+    """Compute spatial patch-local variance."""
+
+    sqr_clip = core.std.Expr([clip], "x x *")
+
+    def box_filter(source):
+        return core.std.BoxBlur(source, hradius=rad, vradius=rad)
+
+    assert clip.format.id in [vs.GRAYS, vs.RGBS], clip.format
+
+    avg, sqr_avg = box_filter(clip), box_filter(sqr_clip)
+
+    result = core.std.Expr([sqr_avg, avg], "x y y * -")
+    kwargs = {'format': vs.GRAYS, 'matrix_s': '709'}
+    return core.resize.Bilinear(result, **kwargs)
+
+
 def ShowMotion(hvecs, vvecs, maxv=16):
     """Visualize motion using HSV notation."""
     output = core.std.BlankClip(hvecs, format=vs.RGB24)
@@ -252,18 +353,4 @@ def ShowMotion(hvecs, vvecs, maxv=16):
     output = core.std.ModifyFrame(output, [output, hvecs, vvecs], fn)
 
     return core.resize.Bilinear(output,
-                                format=vs.YUV420P8, matrix_s="470bg")
-
-
-def Expr(clips, expr, **kwargs):
-    """Wraps Vapoursynth Expr function."""
-    visitor = v()
-    visitor.visit(ast.parse(expr))
-    expr = ' '.join(visitor.tokens)
-    return core.std.Expr(clips, expr, **kwargs)
-
-
-def AvsScale(video, width):
-    """Scale to a new width."""
-    kwargs = {'width': width, 'height': video.height * width // video.width}
-    return core.resize.Bicubic(video, **kwargs)
+                                format=vs.YUV420P8, matrix_s="709")
