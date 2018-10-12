@@ -3,6 +3,14 @@
 import os, ast, itertools
 import vapoursynth as vs
 import numpy as np, cv2
+from functools \
+    import partial
+
+try:
+    no_optflow = False
+    import cv2.optflow
+except ImportError:
+    no_optflow = True
 
 try:
     no_ximgproc = False
@@ -17,6 +25,35 @@ except ImportError:
     no_videostab = True
 
 core = vs.get_core()
+
+YUV_IDS = \
+    [
+        vs.YUV420P8,
+        vs.YUV422P8,
+        vs.YUV444P8,
+        vs.YUV410P8,
+        vs.YUV411P8,
+        vs.YUV440P8,
+        vs.YUV420P9,
+        vs.YUV422P9,
+        vs.YUV444P9,
+        vs.YUV444PH,
+        vs.YUV444PS,
+        vs.YUV420P10,
+        vs.YUV422P10,
+        vs.YUV444P10,
+        vs.YUV420P12,
+        vs.YUV422P12,
+        vs.YUV444P12,
+        vs.YUV420P14,
+        vs.YUV422P14,
+        vs.YUV444P14,
+        vs.YUV420P16,
+        vs.YUV422P16,
+        vs.YUV444P16,
+    ]
+
+cv2optflows = []
 
 matrices = {
     'matrix_in_s': '709',
@@ -150,7 +187,8 @@ class v(ast.NodeVisitor):
 
 def input_array(frame):
     """Wraps frame into read-only numpy array."""
-    assert frame.format.id in [vs.RGBS, vs.GRAYS]
+    possible_formats = [vs.RGBS, vs.RGB24, vs.GRAYS]
+    assert frame.format.id in possible_formats
 
     if frame.format.id == vs.GRAYS:
         return np.asarray(frame.get_read_array(0))
@@ -184,6 +222,29 @@ def AvsSubtitle(video, text, position=2):
             r"""\an""" + str(position) + r"""}"""
 
     return core.sub.Subtitle(clip=video, text=style + text)
+
+
+def AddFCounter(video):
+    scale1 = str(int(100 * video.width  / 1920))
+    scale2 = str(int(100 * video.height / 1080))
+
+    scale = max(scale1, scale2)
+
+    style = r"""{\fn(Fontin),""" +\
+            r"""\bord(2.4),""" +\
+            r"""\b900,""" +\
+            r"""\fsp(1.0),""" +\
+            r"""\fs70,""" +\
+            r"""\fscx""" + scale + r""",""" +\
+            r"""\fscy""" + scale + r""",""" +\
+            r"""\1c&H00FFFF,""" +\
+            r"""\3c&H000000,""" +\
+            r"""\an""" + str(9) + r"""}"""
+
+    def evalf(n, clip):
+        return core.sub.Subtitle(clip=clip, text=style + str(n))
+
+    return core.std.FrameEval(video, partial(evalf, clip=video))
 
 
 def AddHBorders(clip, target_height):
@@ -240,16 +301,26 @@ def SmartStack(clips):
         stack_clips[::3] = [AddWBorders(clip, max(widths)) for clip in clips]
         return core.std.StackVertical(stack_clips)
 
+def ComputeMotion(clip, alg, *args, **kwargs):
+    """Attach motion data to the clip."""
 
-def ComputeMotion(clip, *args, **kwargs):
+    assert not no_optflow and alg in cv2optflows \
+        or alg in ['mvtools2', 'farneback'], alg
+
+    if alg == 'mvtools2':
+        return MotionMVTools(clip, *args, **kwargs)
+
+    if alg == 'farneback':
+        return FarnebackOF(clip, *args, **kwargs)
+
+
+def MotionMVTools(clip, *args, **kwargs):
     """Attach motion data to the clip."""
 
     if 'pel' not in kwargs:
         kwargs['pel'] = 2
 
     pel = kwargs['pel']
-
-    thscd1, thscd2 = 400, 130
 
     if 'thscd1' in kwargs:
         thscd1 = kwargs['thscd1']
@@ -258,6 +329,11 @@ def ComputeMotion(clip, *args, **kwargs):
     if 'thscd2' in kwargs:
         thscd2 = kwargs['thscd2']
         del kwargs['thscd2']
+
+    thscd1, thscd2 = 400, 90
+
+    if 'badsad' not in kwargs:
+        kwargs['badsad'] = 1500
 
     super_opts = ['hpad', 'vpad', 'pel', 'levels',
                   'chroma', 'sharp', 'rfilter']
@@ -277,21 +353,23 @@ def ComputeMotion(clip, *args, **kwargs):
 
     hvecs = core.mv.Mask(clip, vecs, kind=3, ysc=128, **kw)
     vvecs = core.mv.Mask(clip, vecs, kind=4, ysc=128, **kw)
+
+    ShufflePlanes = core.std.ShufflePlanes
+
+    dx = ShufflePlanes(hvecs, 0, vs.GRAY)
+    dy = ShufflePlanes(vvecs, 0, vs.GRAY)
+
     sads = core.mv.Mask(clip, vecs, kind=1, **kw)
 
-    hvecs = core.std.ShufflePlanes(
-        clips=hvecs, planes=0, colorfamily=vs.GRAY)
+    dx = core.std.Expr(dx, "x 128 - %d /" % pel, vs.GRAYS)
+    dy = core.std.Expr(dy, "x 128 - %d /" % pel, vs.GRAYS)
 
-    vvecs = core.std.ShufflePlanes(
-        clips=vvecs, planes=0, colorfamily=vs.GRAY)
+    return clip, [dx, dy, ShufflePlanes(sads, 0, vs.GRAY)]
 
-    sads = core.std.ShufflePlanes(
-        clips=sads, planes=0, colorfamily=vs.GRAY)
 
-    hvecs = core.std.Expr(hvecs, "x 128 - %d /" % pel, vs.GRAYS)
-    vvecs = core.std.Expr(vvecs, "x 128 - %d /" % pel, vs.GRAYS)
-
-    return clip, (hvecs, vvecs, sads)
+def FarnebackOF(clip, *args, **kwargs):
+    """Attach motion data to the clip."""
+    assert False, "Not implemented yet"
 
 
 def AvsScale(video, width):
@@ -316,7 +394,6 @@ def Variance(clip, rad=7):
         return core.std.BoxBlur(source, hradius=rad, vradius=rad)
 
     assert clip.format.id in [vs.GRAYS, vs.RGBS], clip.format
-
     avg, sqr_avg = box_filter(clip), box_filter(sqr_clip)
 
     result = core.std.Expr([sqr_avg, avg], "x y y * -")
@@ -326,6 +403,9 @@ def Variance(clip, rad=7):
 
 def ShowMotion(hvecs, vvecs, maxv=16):
     """Visualize motion using HSV notation."""
+
+    assert hvecs.format.id == vs.GRAYS
+    assert vvecs.format.id == vs.GRAYS
     output = core.std.BlankClip(hvecs, format=vs.RGB24)
 
     def fn(n, f):
