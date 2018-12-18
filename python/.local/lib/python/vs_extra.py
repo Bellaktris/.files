@@ -1,10 +1,11 @@
 """Vapoursynth helper functions."""
 
-import os, ast, itertools
+import os, sys, ast, itertools
 import vapoursynth as vs
 import numpy as np, cv2
-from functools \
-    import partial
+
+from ctypes.util import find_library
+from functools import partial
 
 try:
     no_optflow = False
@@ -26,39 +27,31 @@ except ImportError:
 
 core = vs.get_core()
 
-YUV_IDS = \
-    [
-        vs.YUV420P8,
-        vs.YUV422P8,
-        vs.YUV444P8,
-        vs.YUV410P8,
-        vs.YUV411P8,
-        vs.YUV440P8,
-        vs.YUV420P9,
-        vs.YUV422P9,
-        vs.YUV444P9,
-        vs.YUV444PH,
-        vs.YUV444PS,
-        vs.YUV420P10,
-        vs.YUV422P10,
-        vs.YUV444P10,
-        vs.YUV420P12,
-        vs.YUV422P12,
-        vs.YUV444P12,
-        vs.YUV420P14,
-        vs.YUV422P14,
-        vs.YUV444P14,
-        vs.YUV420P16,
-        vs.YUV422P16,
-        vs.YUV444P16,
-    ]
+mvtools2_p, sub_p = \
+    find_library('mvtools'), \
+    find_library('subtext')
 
-cv2optflows = []
+imwri_p, ffms2_p = \
+    find_library('imwri'),   \
+    find_library('ffms2')
 
-matrices = {
-    'matrix_in_s': '709',
-    'matrix_s': '709',
-}
+
+def check_plugin(name, ns):
+    return not hasattr(core, ns) \
+        and name is not None
+
+
+if check_plugin(mvtools2_p, 'mv'):
+    core.std.LoadPlugin(mvtools2_p)
+
+if check_plugin(ffms2_p, 'ffms2'):
+    core.std.LoadPlugin(ffms2_p)
+
+if check_plugin(imwri_p, 'imwri'):
+    core.std.LoadPlugin(imwri_p)
+
+if check_plugin(sub_p, 'sub'):
+    core.std.LoadPlugin(sub_p)
 
 
 class v(ast.NodeVisitor):
@@ -185,22 +178,138 @@ class v(ast.NodeVisitor):
         super(v, self).generic_visit(node)
 
 
-def input_array(frame):
-    """Wraps frame into read-only numpy array."""
-    possible_formats = [vs.RGBS, vs.RGB24, vs.GRAYS]
-    assert frame.format.id in possible_formats
+def input_array(vsnode, frame_num=None):
+    """Wraps video frame into read-only numpy array."""
 
-    if frame.format.id == vs.GRAYS:
+    frame = vsnode.get_frame(frame_num) \
+        if hasattr(vsnode, 'get_frame') else vsnode
+
+    possible_formats = [vs.RGB, vs.GRAY]
+    assert frame.format.color_family in possible_formats
+
+    if frame.format.color_family == vs.GRAY:
         return np.asarray(frame.get_read_array(0))
 
     f2np = lambda i: np.asarray(frame.get_read_array(i))
     return cv2.merge([f2np(i) for i in (0, 1, 2)])
 
 
+def assign_frame(lhs, rhs_planes, **props):
+    """Assigns data to VapourSynth video frame."""
+
+    split = lambda x: [x] if len(x.shape) == 2 \
+        else np.squeeze(np.dsplit(x, x.shape[2]))
+
+    if type(rhs_planes) is np.ndarray:
+        rhs_planes = [rhs_planes]
+
+    lhs.props.update(props)
+
+    rhs_planes = [x for l in rhs_planes for x in split(l)]
+
+    for i, f in enumerate(rhs_planes):
+        np.asarray(lhs.get_write_array(i)).__iadd__(f)
+
+    return lhs  # Not conventional in Py, but useful
+
+
+def scenes(video_clip, *compl_clips, ml=11):
+    """Groups frames by _SceneChangePrev prop."""
+
+    clips = [video_clip, *compl_clips]
+    frames = zip(*[v.frames() for v in clips])
+
+    def has_scp(fs):
+        return fs[0].props['_SceneChangePrev']
+
+    def sfn(sum, element):
+        return sum[0] + element[0], element[1]
+
+    frames = ((has_scp(f), f) for f in frames)
+
+    def contract_dissolves(frames):
+        pv, pf = next(frames)
+
+        for v, f in frames:
+            if v == 1:
+                pv == 0
+
+            yield (pv, pf)
+            pv, pf = v, f
+
+        yield (pv, pf)
+
+    def clean(frames):
+        j = -ml
+        for i, (v, f) in enumerate(frames):
+            if v == 0 or i - j <= ml:
+                yield (0, f)
+            else:
+                yield (1, f)
+                j = i
+
+    frames = clean(contract_dissolves(frames))
+    frames = itertools.accumulate(frames, sfn)
+
+    scenes = itertools.groupby(frames, lambda x: x[0])
+    return (map(lambda f: f[1], s) for _, s in scenes)
+
+
+def VideoSource(filename, **kwargs):
+    """Wraps ffms2 source fn with some metadata."""
+    if filename.endswith(('.jpg', '.png')):
+        if not os.path.exists(filename % 0):
+            if 'firstnum' not in kwargs:
+                kwargs['firstnum'] = 1
+
+        return core.imwri.Read(filename, **kwargs)
+
+    return core.ffms2.Source(filename, **kwargs)
+
+
+def Yuv2GRAY8(video):
+    """Converts input video to GRAY8."""
+    kw = {'matrix_in_s': '709', 'format': vs.GRAY8}
+    return core.resize.Bilinear(video, **kw)
+
+
+def Yuv2GRAYS(video):
+    """Converts input video to GRAY8."""
+    kw = {'matrix_in_s': '709', 'format': vs.GRAYS}
+    return core.resize.Bilinear(video, **kw)
+
+
+def Yuv2RGB24(video):
+    """Converts input video to RGB24."""
+    kw = {'matrix_in_s': '709', 'format': vs.RGB24}
+    return core.resize.Bilinear(video, **kw)
+
+
 def Yuv2RGBS(video):
     """Converts input video to RGBS."""
     kw = {'matrix_in_s': '709', 'format': vs.RGBS}
     return core.resize.Bilinear(video, **kw)
+
+
+def Yuv2BGR24(video):
+    """Converts input video to BGR24."""
+    video, idxs, fmt = Yuv2RGB24(video), [2, 1, 0], vs.RGB
+    return core.std.ShufflePlanes(video, idxs, fmt)
+
+
+def Yuv2BGRS(video):
+    """Converts input video to BGRS."""
+    video, idxs, fmt = Yuv2RGBS(video), [2, 1, 0], vs.RGB
+    return core.std.ShufflePlanes(video, idxs, fmt)
+
+
+def MakeGRAY8(video):
+    """Converts input video [YUV or RGB] to vs.GRAY8."""
+    if not video.format.color_family == vs.YUV:
+        return core.resize.Bilinear(video, format=vs.GRAY8)
+    else:
+        fnkwargs = dict(matrix_in_s='709', format=vs.GRAY8)
+        return core.resize.Bilinear(video, **fnkwargs)
 
 
 def AvsSubtitle(video, text, position=2):
@@ -225,10 +334,7 @@ def AvsSubtitle(video, text, position=2):
 
 
 def AddFCounter(video):
-    scale1 = str(int(100 * video.width  / 1920))
-    scale2 = str(int(100 * video.height / 1080))
-
-    scale = max(scale1, scale2)
+    scale = str(100 * video.height // 1080)
 
     style = r"""{\fn(Fontin),""" +\
             r"""\bord(2.4),""" +\
@@ -247,6 +353,11 @@ def AddFCounter(video):
     return core.std.FrameEval(video, partial(evalf, clip=video))
 
 
+def CenterCrop(clip, margin):
+    """Applies center cropping with the given margin value."""
+    return core.std.Crop(clip, margin, margin, margin, margin)
+
+
 def AddHBorders(clip, target_height):
     """Add top/bottom borders to match target height."""
     assert target_height >= clip.height
@@ -263,6 +374,12 @@ def AddWBorders(clip, target_width):
     return core.std.AddBorders(clip, diff // 2, diff - diff / 2, 0, 0)
 
 
+def HScale(clip, H):
+    """Scale input video to the given height."""
+    width= (clip.width * H / clip.height) // 2 * 2
+    return core.resize.Bilinear(clip, height=H, width=width)
+
+
 def SmartStack(clips):
     """Stack videos along best dimension."""
 
@@ -270,7 +387,12 @@ def SmartStack(clips):
     widths = [clip.width for clip in clips]
 
     for i in range(len(clips)):
-        kw = {'format': vs.YUV420P8, **matrices}
+        if clips[i].format.color_family == vs.YUV:
+            kw = {'format': vs.YUV420P8, 'matrix_in_s': '709'}
+
+        if clips[i].format.color_family != vs.YUV:
+            kw = {'format': vs.YUV420P8, 'matrix_s': '709'}
+
         clips[i] = core.resize.Bilinear(clips[i], **kw)
 
     stack_clips = [None] * (3 * len(clips) - 2)
@@ -301,17 +423,85 @@ def SmartStack(clips):
         stack_clips[::3] = [AddWBorders(clip, max(widths)) for clip in clips]
         return core.std.StackVertical(stack_clips)
 
+
 def ComputeMotion(clip, alg, *args, **kwargs):
     """Attach motion data to the clip."""
 
-    assert not no_optflow and alg in cv2optflows \
-        or alg in ['mvtools2', 'farneback'], alg
+    assert alg in ['mvtools2', 'farneback'], alg
 
     if alg == 'mvtools2':
         return MotionMVTools(clip, *args, **kwargs)
 
     if alg == 'farneback':
         return FarnebackOF(clip, *args, **kwargs)
+
+
+def FarnebackOF(clip, *args, **kwargs):
+    """Attach motion data to the clip."""
+
+    output = core.std.BlankClip(clip, format=vs.RGBS)
+    assert clip.format.color_family == vs.GRAY, clip
+
+    def fn(n, f):
+        frame_x = input_array(clip, max(n + 0, 0))
+        scn_chng_prop_name = '_SceneChangePrev'
+
+        isb = 'isb' in kwargs and kwargs['isb']
+
+        if not isb:
+            frame_y = input_array(clip, max(n - 1, 0))
+
+        if isb:
+            scn_chng_prop_name = '_SceneChangeNext'
+            N = min(n + 1, clip.num_frames - 1)
+            frame_y = input_array(clip, N)
+
+        fnargs = {
+            'prev': frame_x,
+            'next': frame_y,
+            'flow': None,
+            'flags': 0,
+            'poly_sigma': kwargs.get('poly_sigma', 2.4),
+            'pyr_scale': kwargs.get('pyr_scale', 0.5),
+            'iterations': kwargs.get('iterations', 1),
+            'winsize': kwargs.get('winsize', 15),
+            'levels': kwargs.get('levels', 3),
+            'poly_n': kwargs.get('poly_n', 11),
+        }
+
+        flow = cv2.calcOpticalFlowFarneback(**fnargs)
+
+        xv = np.linspace(0, flow.shape[1], flow.shape[1],
+                         False, dtype=np.float32)
+
+        yv = np.linspace(0, flow.shape[0], flow.shape[0],
+                         False, dtype=np.float32)
+
+        frame_x = frame_x.astype(np.float32) / 255.0
+        frame_y = frame_y.astype(np.float32) / 255.0
+
+        xv = np.tile(np.expand_dims(xv, 0), [flow.shape[0], 1])
+        yv = np.tile(np.expand_dims(yv, 1), [1, flow.shape[1]])
+
+        mt, mode = flow + np.dstack([xv, yv]), cv2.INTER_LINEAR
+        diff_map = frame_x - cv2.remap(frame_y, mt, None, mode)
+
+        sads, props = np.abs(diff_map), {scn_chng_prop_name: 0}
+        change_map = (sads > 800 / 64 / 255).astype(np.float32)
+
+        if np.mean(change_map) > 90 / 255:
+            sads = np.zeros(sads.shape)
+            flow = np.zeros(flow.shape)
+            props[scn_chng_prop_name] = 1
+
+        return assign_frame(f.copy(), [flow, sads], **props)
+
+    output = core.std.ModifyFrame(output, output, fn)
+
+    take_plane = lambda chnl: \
+        core.std.ShufflePlanes(output, chnl, vs.GRAY)
+
+    return clip,  (take_plane(0), take_plane(1), take_plane(2))
 
 
 def MotionMVTools(clip, *args, **kwargs):
@@ -322,6 +512,8 @@ def MotionMVTools(clip, *args, **kwargs):
 
     pel = kwargs['pel']
 
+    thscd1, thscd2 = 400, 90
+
     if 'thscd1' in kwargs:
         thscd1 = kwargs['thscd1']
         del kwargs['thscd1']
@@ -329,8 +521,6 @@ def MotionMVTools(clip, *args, **kwargs):
     if 'thscd2' in kwargs:
         thscd2 = kwargs['thscd2']
         del kwargs['thscd2']
-
-    thscd1, thscd2 = 400, 90
 
     if 'badsad' not in kwargs:
         kwargs['badsad'] = 1500
@@ -367,11 +557,6 @@ def MotionMVTools(clip, *args, **kwargs):
     return clip, [dx, dy, ShufflePlanes(sads, 0, vs.GRAY)]
 
 
-def FarnebackOF(clip, *args, **kwargs):
-    """Attach motion data to the clip."""
-    assert False, "Not implemented yet"
-
-
 def AvsScale(video, width):
     """Scale to a new width."""
     height = video.height * width // video.width
@@ -379,7 +564,7 @@ def AvsScale(video, width):
     return core.resize.Bicubic(video, **kwargs)
 
 
-def Expr(clips, expr, **kwargs):
+def Expr(expr, clips, **kwargs):
     """Wrapper for VapourSynth Expr function."""
     expr = ' '.join(v().visit(ast.parse(expr)))
     return core.std.Expr(clips, expr, **kwargs)
@@ -409,8 +594,7 @@ def ShowMotion(hvecs, vvecs, maxv=16):
     output = core.std.BlankClip(hvecs, format=vs.RGB24)
 
     def fn(n, f):
-        x = np.asarray(f[1].get_read_array(0))
-        y = np.asarray(f[2].get_read_array(0))
+        x, y = input_array(f[1]), input_array(f[2])
 
         H = np.arctan2(y, x) / (2 * np.pi) + 0.5
         V = np.sqrt(np.square(x) + np.square(y))
@@ -418,17 +602,10 @@ def ShowMotion(hvecs, vvecs, maxv=16):
         V = np.minimum(V / maxv, 1.0)
         S = np.ones(H.shape, H.dtype)
 
-        output_frame = f[0].copy()
         hsv = cv2.merge([360.0 * H, S, V])
 
         rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-        rgb = cv2.split((255 * rgb).astype(np.uint8))
-
-        for i in range(output_frame.format.num_planes):
-            output_plane = np.asarray(output_frame.get_write_array(i))
-            output_plane += rgb[i]
-
-        return output_frame
+        return assign_frame(f[0].copy(), (255 * rgb).astype('uint8'))
 
     output = core.std.ModifyFrame(output, [output, hvecs, vvecs], fn)
 
