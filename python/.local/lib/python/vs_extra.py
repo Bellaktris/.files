@@ -184,10 +184,10 @@ def input_array(vsnode, frame_num=None):
     frame = vsnode.get_frame(frame_num) \
         if hasattr(vsnode, 'get_frame') else vsnode
 
-    possible_formats = [vs.RGB, vs.GRAY]
-    assert frame.format.color_family in possible_formats
+    lsformats = [vs.RGB, vs.GRAY]
+    assert vsnode.format.color_family in lsformats
 
-    if frame.format.color_family == vs.GRAY:
+    if vsnode.format.color_family == vs.GRAY:
         return np.asarray(frame.get_read_array(0))
 
     f2np = lambda i: np.asarray(frame.get_read_array(i))
@@ -227,21 +227,23 @@ def scenes(video_clip, *compl_clips, ml=11):
 
     frames = ((has_scp(f), f) for f in frames)
 
-    def contract_dissolves(frames):
-        pv, pf = next(frames)
+    def contract_dissolves(vdata):
+        pv, pf = next(vdata)
 
-        for v, f in frames:
-            if v == 1:
-                pv == 0
+        for v, f in vdata:
+            x = v
 
-            yield (pv, pf)
-            pv, pf = v, f
+            if pv == 1:
+                x = 0
 
-        yield (pv, pf)
+            yield pv, pf
+            pv, pf = x, f
 
-    def clean(frames):
-        j = -ml
-        for i, (v, f) in enumerate(frames):
+        yield pv, pf
+
+    def clean(vdata):
+        j = -ml - 1
+        for i, (v, f) in enumerate(vdata):
             if v == 0 or i - j <= ml:
                 yield (0, f)
             else:
@@ -269,14 +271,7 @@ def VideoSource(filename, **kwargs):
 
 def Yuv2GRAY8(video):
     """Converts input video to GRAY8."""
-    kw = {'matrix_in_s': '709', 'format': vs.GRAY8}
-    return core.resize.Bilinear(video, **kw)
-
-
-def Yuv2GRAYS(video):
-    """Converts input video to GRAY8."""
-    kw = {'matrix_in_s': '709', 'format': vs.GRAYS}
-    return core.resize.Bilinear(video, **kw)
+    return core.std.ShufflePlanes(video, 0, vs.GRAY)
 
 
 def Yuv2RGB24(video):
@@ -285,10 +280,9 @@ def Yuv2RGB24(video):
     return core.resize.Bilinear(video, **kw)
 
 
-def Yuv2RGBS(video):
-    """Converts input video to RGBS."""
-    kw = {'matrix_in_s': '709', 'format': vs.RGBS}
-    return core.resize.Bilinear(video, **kw)
+def Yuv2GRAYS(video):
+    """Converts input video to GRAYS."""
+    return core.std.Expr(Yuv2GRAY8(video), "x 255 /", vs.GRAYS)
 
 
 def Yuv2BGR24(video):
@@ -297,23 +291,8 @@ def Yuv2BGR24(video):
     return core.std.ShufflePlanes(video, idxs, fmt)
 
 
-def Yuv2BGRS(video):
-    """Converts input video to BGRS."""
-    video, idxs, fmt = Yuv2RGBS(video), [2, 1, 0], vs.RGB
-    return core.std.ShufflePlanes(video, idxs, fmt)
-
-
-def MakeGRAY8(video):
-    """Converts input video [YUV or RGB] to vs.GRAY8."""
-    if not video.format.color_family == vs.YUV:
-        return core.resize.Bilinear(video, format=vs.GRAY8)
-    else:
-        fnkwargs = dict(matrix_in_s='709', format=vs.GRAY8)
-        return core.resize.Bilinear(video, **fnkwargs)
-
-
 def AvsSubtitle(video, text, position=2):
-    """Add simple subtitles."""
+    """Adds simple subtitles."""
     scale1 = str(int(100 * video.width  / 1920))
     scale2 = str(int(100 * video.height / 1080))
 
@@ -359,7 +338,7 @@ def CenterCrop(clip, margin):
 
 
 def AddHBorders(clip, target_height):
-    """Add top/bottom borders to match target height."""
+    """Adds top/bottom borders to match target height."""
     assert target_height >= clip.height
 
     diff = target_height - clip.height
@@ -367,21 +346,36 @@ def AddHBorders(clip, target_height):
 
 
 def AddWBorders(clip, target_width):
-    """Add left/right borders to match target width."""
+    """Adds left/right borders to match target width."""
     assert target_width >= clip.width
 
     diff = target_width - clip.width
     return core.std.AddBorders(clip, diff // 2, diff - diff / 2, 0, 0)
 
 
+def DiskCache(expr, filename):
+    """Either loads video node from disk cache or computes as expr."""
+    return VideoSource(filename) if os.path.exists(filename) else expr
+
+
+def SetOutput(clip, N=0):
+    """Converts video to YUV and register for output."""
+
+    if clip.colorspace is vs.YUV:
+        clip.set_output(N)
+    else:
+        kwargs = {'format': vs.YUV420P8, 'matrix_s': '709'}
+        core.resize.Bilinear(clip, **kwargs).set_output(N)
+
+
 def HScale(clip, H):
-    """Scale input video to the given height."""
-    width= (clip.width * H / clip.height) // 2 * 2
+    """Scales input video to the given height."""
+    width = (clip.width * H / clip.height) // 2 * 2
     return core.resize.Bilinear(clip, height=H, width=width)
 
 
 def SmartStack(clips):
-    """Stack videos along best dimension."""
+    """Stacks videos along best dimension."""
 
     heights = [clip.height for clip in clips]
     widths = [clip.width for clip in clips]
