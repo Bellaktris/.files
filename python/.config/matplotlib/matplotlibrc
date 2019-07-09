@@ -5,6 +5,8 @@ text.latex.unicode          : True
 mathtext.fontset            : cm
 axes.formatter.use_mathtext : True
 lines.linewidth             : 0.8
+markers.fillstyle           : full
+lines.markersize            : 1
 font.size                   : 5
 axes.labelpad               : 1.0
 axes.labelsize              : small
@@ -41,6 +43,7 @@ grid.linewidth              : 0.05
 axes.grid                   : True
 figure.dpi                  : 300
 savefig.transparent         : True
+savefig.jpeg_quality        : 95
 figure.autolayout           : True
 font.serif                  : computer modern roman
 font.cursive                : computer modern roman
