@@ -66,22 +66,22 @@ local osc_param = { -- calculated by osc_init()
 }
 
 local osc_styles = {
-    bigButtons = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs16\\fnmpv-osd-symbols}",
-    smallButtonsL = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs24\\fnmpv-osd-symbols}",
-    smallButtonsLlabel = "{\\fscx105\\fscy105\\fs20\\fn" .. mp.get_property("options/osd-font") .. "}",
-    smallButtonsR = "{\\blur0\\bord0\\fscx105\\fscy105\\1c&H00FFFF\\3c&H000000\\fs27\\fnmpv-osd-symbols}",
-    topButtons = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs16\\fnmpv-osd-symbols}",
+    bigButtons = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25\\fn" .. mp.get_property("options/osd-font") .. "}",
+    smallButtonsL = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25\\fn" .. mp.get_property("options/osd-font") .. "}",
+    smallButtonsLlabel = "{\\fs25\\fn" .. mp.get_property("options/osd-font") .. "}",
+    smallButtonsR = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25\\fn" .. mp.get_property("options/osd-font") .. "}",
+    topButtons = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25\\fn" .. mp.get_property("options/osd-font") .. "}",
 
     elementDown = "{\\1c&H999999}",
-    timecodes = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs20}",
-    vidtitle = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs20\\q2}",
+    timecodes = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25}",
+    vidtitle = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25}",
     box = "{\\rDefault\\blur0\\bord1\\1c&H000000\\3c&H000000}",
 
-    topButtonsBar = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs16\\fnmpv-osd-symbols}",
-    smallButtonsBar = "{\\blur0\\bord0\\fscx105\\fscy105\\1c&H00FFFF\\3c&H000000\\fs15\\fnmpv-osd-symbols}",
-    timecodesBar = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs20}",
-    timePosBar = "{\\blur0\\bord0".. user_opts.tooltipborder .."\\1c&H00FFFF\\3c&H000000\\fs16}",
-    vidtitleBar = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs20\\q2}",
+    topButtonsBar = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25\\fn" .. mp.get_property("options/osd-font") .. "}",
+    smallButtonsBar = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25\\fn" .. mp.get_property("options/osd-font") .. "}",
+    timecodesBar = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25}",
+    timePosBar = "{\\blur0\\bord0".. user_opts.tooltipborder .."\\1c&H00FFFF\\3c&H000000\\fs25}",
+    vidtitleBar = "{\\blur0\\bord0\\1c&H00FFFF\\3c&H000000\\fs25}",
 }
 
 -- internal states, do not touch
@@ -548,7 +548,6 @@ function render_elements(master_ass)
         end
 
         local elem_ass = assdraw.ass_new()
-
         elem_ass:merge(style_ass)
 
         if not (element.type == "button") then
@@ -590,12 +589,11 @@ function render_elements(master_ass)
                     elem_ass:line_to(xp, 1 + foV + (innerH + rad)/2 + 1/6*innerH)
                     elem_ass:line_to(xp-(rad/2), 1 + foV + (innerH - rad)/2 + 1/6*innerH)
                 elseif (slider_lo.stype == "slider") then
-                    elem_ass:rect_cw(xp, 1 + (9*innerH/20) + foV,
-                        elem_geo.w - foH, 1 + (11*innerH/20) + foV)
-                    elem_ass:rect_cw(foH, 1 + (3*innerH/8) + foV,
-                        xp, 1 + (5*innerH/8) + foV)
+                    elem_ass:rect_cw(xp, 1 + (9*innerH/20) + foV, elem_geo.w - foH, 1 + (11*innerH/20) + foV)
+                    elem_ass:rect_cw(foH, 1 + (3*innerH/8) + foV, xp, 1 + (5*innerH/8) + foV)
 
                     elem_ass:move_to(xp, 1 + foV + 1/6*innerH)
+
                     elem_ass:line_to(xp+(rad/2), 1 + foV + (innerH - rad)/2 + 1/6*innerH)
                     elem_ass:line_to(xp, 1 + foV + (innerH + rad)/2 + 1/6*innerH)
                     elem_ass:line_to(xp-(rad/2), 1 + foV + (innerH - rad)/2 + 1/6*innerH)
@@ -1206,39 +1204,6 @@ layouts["bottombar"] = function()
     lo.alpha[1] = user_opts.boxalpha
 
 
-    -- Playlist prev/next
-    geo = { x = osc_geo.x + padX, y = line1,
-            an = 4, w = 18, h = 18 - padY }
-    lo = add_layout("pl_prev")
-    lo.geometry = geo
-    lo.style = osc_styles.topButtonsBar
-
-    geo = { x = geo.x + geo.w + padX, y = geo.y, an = geo.an, w = geo.w, h = geo.h }
-    lo = add_layout("pl_next")
-    lo.geometry = geo
-    lo.style = osc_styles.topButtonsBar
-
-    local t_l = geo.x + geo.w + padX
-
-    -- Cache
-    geo = { x = osc_geo.x + osc_geo.w - padX, y = geo.y,
-            an = 6, w = 150, h = geo.h }
-    lo = add_layout("cache")
-    lo.geometry = geo
-    lo.style = osc_styles.vidtitleBar
-
-    local t_r = geo.x - geo.w - padX*2
-
-    -- Title
-    geo = { x = t_l, y = geo.y, an = 4,
-            w = t_r - t_l, h = geo.h }
-    lo = add_layout("title")
-    lo.geometry = geo
-    lo.style = string.format("%s{\\clip(%f,%f,%f,%f)}",
-        osc_styles.vidtitleBar,
-        geo.x, geo.y-geo.h, geo.w, geo.y+geo.h)
-
-
     -- Playback control buttons
     geo = { x = osc_geo.x + padX, y = line2, an = 4,
             w = buttonW, h = 36 - padY*2}
@@ -1251,7 +1216,7 @@ layouts["bottombar"] = function()
     lo.geometry = geo
     lo.style = osc_styles.smallButtonsBar
 
-    geo = { x = geo.x + geo.w + padX, y = geo.y, an = geo.an, w = geo.w, h = geo.h }
+    geo = { x = geo.x + geo.w, y = geo.y, an = geo.an, w = geo.w, h = geo.h }
     lo = add_layout("ch_next")
     lo.geometry = geo
     lo.style = osc_styles.smallButtonsBar
@@ -1625,9 +1590,9 @@ function osc_init()
 
     ne.content = function ()
         if mp.get_property("pause") == "yes" then
-            return ("\238\132\129")
+            return ("▶")
         else
-            return ("\238\128\130")
+            return ("⏸")
         end
     end
     ne.eventresponder["mbtn_left_up"] =
@@ -1661,7 +1626,7 @@ function osc_init()
     ne = new_element("ch_prev", "button")
 
     ne.enabled = have_ch
-    ne.content = "\238\132\132"
+    ne.content = "⏮"
     ne.eventresponder["mbtn_left_up"] =
         function ()
             mp.commandv("add", "chapter", -1)
@@ -1676,7 +1641,7 @@ function osc_init()
     ne = new_element("ch_next", "button")
 
     ne.enabled = have_ch
-    ne.content = "\238\132\133"
+    ne.content = "⏭"
     ne.eventresponder["mbtn_left_up"] =
         function ()
             mp.commandv("add", "chapter", 1)
@@ -1699,7 +1664,7 @@ function osc_init()
         if not (get_track("audio") == 0) then
             aid = get_track("audio")
         end
-        return (osc_styles.smallButtonsBar .. "\238\132\141" .. osc_styles.smallButtonsLlabel
+        return (osc_styles.smallButtonsBar .. "🔊 " .. osc_styles.smallButtonsLlabel
             .. aid .. "∕" .. #tracks_osc.audio)
     end
     ne.eventresponder["mbtn_left_up"] =

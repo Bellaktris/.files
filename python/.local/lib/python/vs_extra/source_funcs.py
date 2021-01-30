@@ -3,6 +3,7 @@ from vapoursynth import core
 from types import ModuleType
 from os.path import exists
 import vapoursynth as vs
+from sys import stderr
 
 
 VSClip = vs.VideoNode
@@ -49,6 +50,24 @@ def Yuv2BGR24(video: VSClip) -> VSClip:
     return core.std.ShufflePlanes(video, idxs, fmt)
 
 
+def Yuv2RGBS(video: VSClip) -> VSClip:
+    """Converts input video to RGBS."""
+    return core.std.Expr(Yuv2RGB24(video), "x 255 /", vs.RGBS)
+
+
+def Yuv2BGRS(video: VSClip) -> VSClip:
+    """Converts input video to BGRS."""
+    return core.std.Expr(Yuv2BGR24(video), "x 255 /", vs.RGBS)
+
+
+def Yuv2COMPATBGR32(video: VSClip) -> VSClip:
+    """Converts input video to interleaved BGR32."""
+    kw = {'matrix_in_s': '709', 'format': vs.COMPATBGR32}
+
+    assert video.format.color_family == vs.YUV
+    return core.resize.Bilinear(video, **kw)
+
+
 def ScaleFitSize(clip: VSClip, bboxshape) -> VSClip:
     """Ensure that input video fits into bbox."""
 
@@ -63,6 +82,19 @@ def ScaleFitSize(clip: VSClip, bboxshape) -> VSClip:
     return clip if coeff == 1.0 else scaled_video
 
 
+def ScalePadFitSize(clip: VSClip, bboxshape) -> VSClip:
+    """Fit input video fits into bbox."""
+
+    clip = ScaleFitSize(clip, bboxshape)
+    dy = (bboxshape[1] - clip.height) // 2
+    dx = (bboxshape[0] - clip.width) // 2
+
+    A, B = dx // 2 * 2, (dx + 1) // 2 * 2
+    C, D = dy // 2 * 2, (dy + 1) // 2 * 2
+
+    return core.std.AddBorders(clip, A, B, C, D)
+
+
 def VideoSource(filename: str, **kwargs) -> VSClip:
     """Provides generic video source function."""
 
@@ -71,13 +103,18 @@ def VideoSource(filename: str, **kwargs) -> VSClip:
             if 'firstnum' not in kwargs:
                 kwargs['firstnum'] = 1
 
-        clip = core.imwri.Read(filename, **kwargs)
-        # Sets _Primaries to default value as VS fails otherwise."""
-        return core.std.SetFrameProp(clip, "_Primaries", intval=2)
+        iv = core.imwri.Read(filename, **kwargs)
+        return core.std.SetFrameProp(iv, "_Primaries", intval=2)
 
-    clip = core.ffms2.Source(filename, **kwargs)
+    try:
+        output = core.ffms2.Source(filename, **kwargs)
+    except vs.Error as error:
+        kwargs['seekmode'] = -1
+        print("Resetting seekmode to -1", file=stderr)
+        output = core.ffms2.Source(filename, **kwargs)
+
     # Sets _Primaries to default value as VS fails otherwise."""
-    return core.std.SetFrameProp(clip, "_Primaries", intval=2)
+    return core.std.SetFrameProp(output, "_Primaries", intval=2)
 
 
 def DiskCache(expr: VSClip, filename: str) -> VSClip:

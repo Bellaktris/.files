@@ -1,6 +1,6 @@
-from itertools import accumulate
-from itertools import groupby
+from collections import deque
 import vapoursynth as vs
+import numpy as np
 
 
 VSClip = vs.VideoNode
@@ -26,44 +26,102 @@ def async_frames(clip, buf_sz=48):
         yield buf[i % len(buf)].result()
 
 
-def scenes(*vframes, ml=11, k=0):
-    """Groups frames by _SceneChangePrev prop."""
+class scenes(object):
+    """Groups frames into camera shots."""
 
-    frames = zip(*vframes)
+    class Scene(object):
+        def __iter__(self): return self                            # noqa: E704
 
-    def has_scp(fs):
-        return fs[k].props['_SceneChangePrev']
+        def __init__(self, base_gen):
+            self._max_length = int(1e15)
+            self._base_gen = base_gen
+            self._scene_length = 0
+            self._start_guard = 1
 
-    def accumulate_fn(sum, element):
-        return sum[0] + element[0], element[1]
+        def _next_frame(self):
+            base_gen = self._base_gen
 
-    frames = ((has_scp(f), f) for f in frames)
+            try:
+                next_el = next(base_gen.iterable)
+                base_gen.buffer.append(next_el)
+            except StopIteration:
+                pass
 
-    def contract_dissolves(vdata):
-        pv, pf = next(vdata)
+            return base_gen.buffer.popleft()
 
-        for v, f in vdata:
-            x = v
+        def __next__(self):
+            if self._base_gen.buffer:
+                if self._start_guard:
+                    self._start_guard -= 1
+                    return self._next_frame()
 
-            if pv == 1:
-                x = 0
+            base_gen = self._base_gen
 
-            yield pv, pf
-            pv, pf = x, f
+            def _has_scp(vsnode):
+                if isinstance(vsnode, tuple):
+                    vsnode = vsnode[0]
 
-        yield pv, pf
+                scp_prop = '_SceneChangePrev'
+                return vsnode.props[scp_prop]
 
-    def clean(vdata):
-        j = -ml - 1
-        for i, (v, f) in enumerate(vdata):
-            if v == 0 or i - j <= ml:
-                yield (0, f)
-            else:
-                yield (1, f)
-                j = i
+            self._scene_length += 1
 
-    frames = clean(contract_dissolves(frames))
-    frames = accumulate(frames, accumulate_fn)
+            ml = self._max_length
+            if self._scene_length == ml:
+                raise StopIteration
 
-    scenes = groupby(frames, lambda el: el[0])
-    return (map(lambda f: f[1], s) for _, s in scenes)
+            if base_gen.buffer:
+                nextnode = base_gen.buffer[0]
+
+                if not _has_scp(nextnode):
+                    return self._next_frame()
+            raise StopIteration
+
+        def lookahead_list(self):
+            seq = list(self._base_gen.buffer)
+
+            def _has_scp(vsnode):
+                if isinstance(vsnode, tuple):
+                    vsnode = vsnode[0]
+
+                scp_prop = '_SceneChangePrev'
+                return vsnode.props[scp_prop]
+
+            v = self._start_guard
+
+            if v >= len(seq): return seq                           # noqa: E701
+
+            scpseq = [_has_scp(f) for f in seq]
+            scpseq = np.asarray(scpseq)[v:]
+            idx = scpseq.argmax()
+
+            if not scpseq[idx]: return seq                        # noqa: E701
+
+            return seq[:v + idx]
+
+        def assert_min_length(self, v):
+            self._start_guard = max(v, 1)
+            return self
+
+        def assert_max_length(self, v):
+            self._max_length = v
+            return self
+
+    def __init__(self, frames, bs=1):
+        self.iterable = frames
+        self.buffer = deque()
+
+        for _ in range(bs):
+            try:
+                f = next(self.iterable)
+                self.buffer.append(f)
+            except StopIteration:
+                break
+
+    def __next__(self):
+        if len(self.buffer) == 0:
+            raise StopIteration
+
+        return scenes.Scene(self)
+
+    def __iter__(self): return self                                # noqa: E704

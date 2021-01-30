@@ -1,14 +1,14 @@
 import ast, vapoursynth as vs                                      # noqa: E401
 
 
-class __nv(ast.NodeVisitor):
+class _nvx(ast.NodeVisitor):
     """Simple expression parser."""
 
     def __init__(self):
         self.tokens = []
 
     def visit(self, expr):
-        super(__nv, self).visit(expr)
+        super(_nvx, self).visit(expr)
         return self.tokens
 
     def visit_BoolOp(self, node):
@@ -55,77 +55,77 @@ class __nv(ast.NodeVisitor):
 
     def visit_Add(self, node):
         self.tokens.append('+')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_UAdd(self, node):
         self.tokens.append('+')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Sub(self, node):
         self.tokens.append('-')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_USub(self, node):
         self.tokens.append('-')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Div(self, node):
         self.tokens.append('/')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Mult(self, node):
         self.tokens.append('*')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Eq(self, node):
         self.tokens.append("=")
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Lt(self, node):
         self.tokens.append("<")
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Gt(self, node):
         self.tokens.append(">")
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_LtE(self, node):
         self.tokens.append("<=")
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_GtE(self, node):
         self.tokens.append(">=")
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Or(self, node):
         self.tokens.append('or')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_And(self, node):
         self.tokens.append('and')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_BitXor(self, node):
         self.tokens.append('xor')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Not(self, node):
         self.tokens.append('not')
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Name(self, node):
         self.tokens.append(node.id)
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Num(self, node):
         self.tokens.append(str(node.n))
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
     def visit_Expr(self, node):
-        super(__nv, self).generic_visit(node)
+        super(_nvx, self).generic_visit(node)
 
 
 def Expr(expr: str, clips, **kwargs):
     """Wrapper for VapourSynth Expr function."""
-    expr = ' '.join(__nv().visit(ast.parse(expr)))
+    expr = ' '.join(_nvx().visit(ast.parse(expr)))
     return vs.core.std.Expr(clips, expr, **kwargs)

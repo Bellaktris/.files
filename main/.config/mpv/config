@@ -47,8 +47,9 @@ term-osd-bar
 # Gui {{{
 no-border
 no-osc
+osd-fractions
 osd-bar-align-y=0
-osd-font='Monaco'
+osd-font='Monaco-UTF8'
 osd-color='#FFFF00'
 osd-border-color='#000000'
 osd-border-size=1
