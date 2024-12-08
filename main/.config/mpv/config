@@ -9,7 +9,7 @@ stop-screensaver=yes
 # }}}
 
 # Performance {{{
-profile=opengl-hq
+# profile=opengl-hq
 # interpolation
 # tscale=oversample
 
@@ -59,14 +59,13 @@ osd-border-size=1
 slang=ru,en,eng
 alang=ru,en,eng
 
-no-sub-visibility
+# no-sub-visibility
 
 demuxer-mkv-subtitle-preroll
 sub-auto=fuzzy
 sub-file-paths=ass:srt:sub:subs:subtitles
 embeddedfonts=yes
 sub-fix-timing=no
-sub-ass-force-style=Kerning=yes
 
 # sub-codepage=uchardet
 
