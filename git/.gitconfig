@@ -1,0 +1,13 @@
+[init]
+	templatedir = ~/.git_template
+[commit]
+  template = ~/.gitmessage
+[core]
+	excludesfile = ~/.gitignore_global
+  pager = diff-so-fancy | less --tabs=2 -RFX
+[fetch]
+  prune = true
+[include]
+  path = ~/.gitconfig-local
+[interactive]
+  diffFilter = diff-so-fancy --patch-mode | less --tabs=2 -RFX

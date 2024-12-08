@@ -1,0 +1,20 @@
+[submodule "vim"]
+	path = vim
+	url = https://github.com/Bellaktris/vim.git
+	branch = master
+[submodule "c++/gdb"]
+	path = gdb/.gdb/dashboard
+	url = https://github.com/cyrus-and/gdb-dashboard
+	branch = master
+[submodule "gdb/.gdb/imshow"]
+	path = gdb/.gdb/imshow
+	url = https://github.com/cuekoo/GDB-ImageWatch
+[submodule "gdb/.gdb/qt5printers"]
+	path = gdb/.gdb/qt5printers
+	url = https://github.com/Lekensteyn/qt5printers
+[submodule "gdb/.gdb/backtrace"]
+	path = gdb/.gdb/backtrace
+	url = https://github.com/philtweir/gdb-pretty-frame-cpp
+[submodule "zsh"]
+	path = zsh
+	url = https://github.com/Bellaktris/prezto

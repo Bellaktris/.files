@@ -1,0 +1,47 @@
+// {{{ ----------------------------
+// vim:tabstop=2:shiftwidth=2
+// vim:foldmarker={{{,}}}
+// vim:fdm=marker:foldenable:ft=cpp
+
+#include <cmemory>
+#include <cstdint>
+#include <cmath>
+#include <ctime>
+#include <cstdio>
+#include <cstdlib>
+
+#include <algorithm>
+#include <bitset>
+#include <deque>
+#include <functional>
+#include <iomanip>
+#include <iostream>
+#include <list>
+#include <map>
+#include <numeric>
+#include <queue>
+#include <set>
+#include <sstream>
+#include <stack>
+#include <string>
+#include <utility>
+#include <vector>
+#include <valarray>
+#include <iterator>
+#include <unordered_set>
+#include <unordered_map>
+
+#ifdef __clang__
+#  include <prettyprinters.hpp>
+#endif
+
+using namespace std;  // NOLINT
+
+// }}}
+
+
+struct $CLASSNAME$ {
+  $RETURNTYPE$ $METHODNAME$($METHODPARAMS$) {
+    return $RETURNTYPE$();
+  }
+};  // struct $CLASSNAME$

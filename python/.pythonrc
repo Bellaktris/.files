@@ -1,0 +1,87 @@
+# -*- coding: utf-8 -*-
+# vim:filetype=python
+
+"""Startup config for interactive python."""
+
+import os, sys, subprocess, glob
+
+
+USER = os.path.expanduser('~')
+CONFIG_DIR = USER + '/.files/python/.ptpython/'
+sys.path.insert(0, CONFIG_DIR)
+
+def _find_brew_site_packages(pkg):
+  try:
+    prefix = subprocess.check_output(
+      ['brew', '--prefix', pkg], stderr=subprocess.DEVNULL
+    ).decode().strip()
+    matches = glob.glob(prefix + '/libexec/lib/python*/site-packages')
+    if matches:
+      return matches[0]
+  except (subprocess.CalledProcessError, FileNotFoundError):
+    pass
+  return None
+
+try:
+  __PTPYTHON__ = True
+  from ptpython.repl import embed
+except ImportError:
+  _brew_sp = _find_brew_site_packages('ptpython')
+  if _brew_sp:
+    sys.path.insert(0, _brew_sp)
+    try:
+      __PTPYTHON__ = True
+      from ptpython.repl import embed
+    except ImportError:
+      __PTPYTHON__ = False
+  else:
+    __PTPYTHON__ = False
+  if not __PTPYTHON__ and os.isatty(0):
+    print("\033[33mptpython not installed — run: pip install ptpython\033[0m", file=sys.stderr)
+
+try:
+  __IPYTHON__
+  __IPYTHON__ = True
+except NameError:
+  __IPYTHON__ = False
+
+
+if not __IPYTHON__:
+  class clear(object):
+    def __repr__(self):
+      self.__call__()
+      return '      '
+
+    def __call__(self):
+      print('\033[2J\033[H', end='')
+
+  class pwd(object):
+    def __repr__(self):
+      return os.getcwd()
+
+    def __call__(self):
+      return os.getcwd()
+
+  class exit(object):
+    def __call__(self):
+      raise SystemExit
+
+    def __repr__(self):
+      raise SystemExit
+
+  quit = exit = exit()
+  clear = clear(); pwd = pwd()
+
+
+if __PTPYTHON__ and not __IPYTHON__ and os.isatty(0):
+  from config import configure
+
+  globals_table = {
+    'exit': exit,
+    'quit': quit,
+    'pwd': pwd,
+    'clear': clear,
+  }
+
+  sys.exit(embed(configure=configure, globals=globals_table,
+                 history_filename=CONFIG_DIR + 'history'))
