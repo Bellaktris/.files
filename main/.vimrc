@@ -7,7 +7,7 @@ if !exists('g:root_dir')
       execute 'silent !mkdir -p ' . g:temp_dir
   endif
 
-  if !isdirectory($HOME + '/.vim')
+  if !isdirectory($HOME . '/.vim')
       execute 'silent !mkdir -p ' . $HOME . '/.vim'
   endif
 

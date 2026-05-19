@@ -3,7 +3,7 @@ local cmp = require('cmp')
 cmp.setup({
   snippet = {
     expand = function(args)
-      vim.fn["UltiSnips#Anon"](args.body)
+      vim.snippet.expand(args.body)
     end,
   },
   mapping = cmp.mapping.preset.insert({
@@ -23,9 +23,6 @@ cmp.setup({
 
 cmp.setup.filetype('gitcommit', {
   sources = cmp.config.sources(
-    {
-      { name = 'cmp_git' },
-    },
     {
       { name = 'buffer' },
     }

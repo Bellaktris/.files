@@ -27,7 +27,7 @@ vim.diagnostic.config({
 })
 
 vim.cmd[[
-  autocmd CursorMoved * lua vim.diagnostic.open_float({ scope = "line", border = "single", focusable = false })
+  autocmd CursorHold * lua vim.diagnostic.open_float({ scope = "line", border = "single", focusable = false })
   autocmd DiagnosticChanged * lua vim.diagnostic.setqflist({open = false })
 ]]
 
