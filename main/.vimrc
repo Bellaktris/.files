@@ -11,6 +11,7 @@ if !exists('g:root_dir')
       execute 'silent !mkdir -p ' . $HOME . '/.vim'
   endif
 
+  let g:use_ycm = 1
   let g:root_dir = "/Users/ygitman/.files/vim"
   let g:vim_plug_dir = "/Users/ygitman/.vim-thirdparty"
 
