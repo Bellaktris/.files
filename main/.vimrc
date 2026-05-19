@@ -1,7 +1,7 @@
 if !exists('g:root_dir')
-  let g:vimrc_dir = "/Users/ygitman/.files/vim/vimrc"
-  let g:temp_dir = "/Users/ygitman/.tempd"
-  let g:snippet_dir = "/Users/ygitman/.files/vim/ultisnips"
+  let g:vimrc_dir = expand('~') . "/.files/vim/vimrc"
+  let g:temp_dir = expand('~') . "/.tempd"
+  let g:snippet_dir = expand('~') . "/.files/vim/ultisnips"
 
   if !isdirectory(g:temp_dir)
       execute 'silent !mkdir -p ' . g:temp_dir
@@ -12,8 +12,8 @@ if !exists('g:root_dir')
   endif
 
   let g:use_ycm = 1
-  let g:root_dir = "/Users/ygitman/.files/vim"
-  let g:vim_plug_dir = "/Users/ygitman/.vim-thirdparty"
+  let g:root_dir = expand('~') . "/.files/vim"
+  let g:vim_plug_dir = expand('~') . "/.vim-thirdparty"
 
   execute 'let &runtimepath .=",' . g:root_dir . '"'
 

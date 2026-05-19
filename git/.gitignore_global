@@ -55,7 +55,6 @@ compile_commands.json
 *.maf
 *.mtc
 *.mtc1
-*.out
 *.fdb_latexmk
 *.fls
 *.brf
