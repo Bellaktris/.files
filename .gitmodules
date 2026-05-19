@@ -2,7 +2,7 @@
 	path = vim
 	url = https://github.com/Bellaktris/vim.git
 	branch = master
-[submodule "c++/gdb"]
+[submodule "gdb/.gdb/dashboard"]
 	path = gdb/.gdb/dashboard
 	url = https://github.com/cyrus-and/gdb-dashboard
 	branch = master

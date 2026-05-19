@@ -19,6 +19,7 @@ import sys
 import locale
 import platform
 import json
+import shutil
 
 __version__ = '0.3.2'
 
@@ -203,23 +204,10 @@ class GPUStat(object):
         return self
 
 
-class GPUStatCollection(object):
-
-    def __init__(self, gpu_list):
-        self.gpus = OrderedDict()
-        for g in gpu_list:
-            self.gpus[g.uuid] = g
-
-        # attach process information (owner, pid, etc.)
-        self.update_process_information()
-
-        # attach additional system information
-        self.hostname = platform.node()
-        self.query_time = datetime.now()
+class NvidiaBackend(object):
 
     @staticmethod
-    def new_query():
-        # 1. get the list of gpu and status
+    def query_gpus():
         gpu_query_columns = ('index', 'uuid', 'name', 'temperature.gpu',
                              'utilization.gpu', 'memory.used', 'memory.total')
         gpu_list = []
@@ -238,11 +226,10 @@ class GPUStatCollection(object):
                          })
             gpu_list.append(g)
 
-        return GPUStatCollection(gpu_list)
+        return gpu_list
 
     @staticmethod
     def running_processes():
-        # 1. collect all running GPU processes
         gpu_query_columns = ('gpu_uuid', 'pid', 'used_memory')
         smi_output = execute_process(
             r'nvidia-smi --query-compute-apps={query_cols} --format=csv,noheader,nounits'.format(
@@ -261,7 +248,6 @@ class GPUStatCollection(object):
         pid_map = {int(e['pid']) : None for e in process_entries
                    if not 'Not Supported' in e['pid']}
 
-        # 2. map pid to username, etc.
         if pid_map:
             try:
                 pid_output = execute_process('ps -o {} -p {}'.format(
@@ -275,16 +261,11 @@ class GPUStatCollection(object):
                         'user' : user,
                         'comm' : comm
                     }
-            except CalledProcessError as e:
+            except CalledProcessError:
                 pass
 
-        # 3. add some process information to each process_entry
         for process_entry in process_entries[:]:
-
             if 'Not Supported' in process_entry['pid']:
-                # TODO move this stuff into somewhere appropriate
-                # such as running_processes(): process_entry = ...
-                # or introduce Process class to elegantly handle it
                 process_entry['user'] = None
                 process_entry['comm'] = None
                 process_entry['pid'] = None
@@ -294,8 +275,6 @@ class GPUStatCollection(object):
             pid = int(process_entry['pid'])
 
             if pid_map[pid] is None:
-                # !?!? this pid is listed up in nvidia-smi's query result,
-                # but actually seems not to be a valid running process. ignore!
                 process_entries.remove(process_entry)
                 continue
 
@@ -303,14 +282,186 @@ class GPUStatCollection(object):
 
         return process_entries
 
+
+class AMDBackend(object):
+
+    @staticmethod
+    def _find_json_key(d, *substrings):
+        for key in d:
+            if all(s.lower() in key.lower() for s in substrings):
+                return d[key]
+        return None
+
+    @staticmethod
+    def query_gpus():
+        gpu_list = []
+
+        try:
+            info_raw = execute_process(
+                'rocm-smi --json --showtemp --showuse --showmeminfo vram --showproductname'
+            )
+            info = json.loads(info_raw)
+        except (CalledProcessError, ValueError):
+            return gpu_list
+
+        cards = sorted(
+            ((k, v) for k, v in info.items() if k.startswith('card')),
+            key=lambda x: int(''.join(c for c in x[0] if c.isdigit()) or '0')
+        )
+
+        for idx, (card_id, card_data) in enumerate(cards):
+            find = lambda *subs: AMDBackend._find_json_key(card_data, *subs)
+
+            name = find('card', 'series') or find('card', 'model') or card_id
+
+            temp = find('temperature', 'edge')
+            if temp is not None:
+                temp = str(temp).split('.')[0]
+
+            util = find('gpu', 'use', '%')
+            if util is not None:
+                util = str(util).replace('%', '').strip()
+
+            vram_total_b = find('vram', 'total', 'memory')
+            vram_used_b = find('vram', 'used', 'memory')
+
+            vram_total = None
+            vram_used = None
+            if vram_total_b is not None:
+                vram_total = str(int(vram_total_b) // (1024 * 1024))
+            if vram_used_b is not None:
+                vram_used = str(int(vram_used_b) // (1024 * 1024))
+
+            card_num = ''.join(c for c in card_id if c.isdigit()) or str(idx)
+            uuid = 'AMD-GPU-' + card_num
+
+            g = GPUStat({
+                'index': str(idx),
+                'uuid': uuid,
+                'name': str(name),
+                'temperature.gpu': temp,
+                'utilization.gpu': util,
+                'memory.used': vram_used or '[N/A]',
+                'memory.total': vram_total or '[N/A]',
+            })
+            gpu_list.append(g)
+
+        return gpu_list
+
+    @staticmethod
+    def running_processes():
+        process_entries = []
+
+        try:
+            pid_raw = execute_process('rocm-smi --showpidgpus --json')
+            pid_info = json.loads(pid_raw)
+        except (CalledProcessError, ValueError):
+            return process_entries
+
+        pid_map = {}
+        for key, val in pid_info.items():
+            if not key.isdigit():
+                continue
+            pid = key
+            gpus = val if isinstance(val, list) else [val]
+            for gpu_id in gpus:
+                card_num = str(gpu_id).replace('card', '')
+                uuid = 'AMD-GPU-' + card_num
+                process_entries.append({
+                    'gpu_uuid': uuid,
+                    'pid': pid,
+                    'used_memory': None,
+                })
+                pid_map[int(pid)] = None
+
+        if pid_map:
+            try:
+                pid_output = execute_process('ps -o {} -p {}'.format(
+                    'pid,user:16,comm',
+                    ','.join(map(str, pid_map.keys()))
+                ))
+                for line in pid_output.split('\n'):
+                    if (not line) or 'PID' in line: continue
+                    pid, user, comm = line.split()[:3]
+                    pid_map[int(pid)] = {
+                        'user': user,
+                        'comm': comm,
+                    }
+            except CalledProcessError:
+                pass
+
+        for entry in process_entries[:]:
+            pid = int(entry['pid'])
+            if pid_map.get(pid) is None:
+                process_entries.remove(entry)
+                continue
+            entry.update(pid_map[pid])
+
+        return process_entries
+
+
+def _detect_backends():
+    backends = []
+    if shutil.which('nvidia-smi'):
+        backends.append(NvidiaBackend)
+    if shutil.which('rocm-smi'):
+        backends.append(AMDBackend)
+    return backends
+
+
+class GPUStatCollection(object):
+
+    def __init__(self, gpu_list, process_fn):
+        self.gpus = OrderedDict()
+        for g in gpu_list:
+            self.gpus[g.uuid] = g
+
+        self._process_fn = process_fn
+        self.update_process_information()
+
+        self.hostname = platform.node()
+        self.query_time = datetime.now()
+
+    @staticmethod
+    def new_query():
+        backends = _detect_backends()
+        if not backends:
+            raise CalledProcessError(1, 'No GPU tools found (nvidia-smi or rocm-smi)')
+
+        gpu_list = []
+        process_fns = []
+        for backend in backends:
+            gpu_list.extend(backend.query_gpus())
+            process_fns.append(backend.running_processes)
+
+        def combined_processes():
+            entries = []
+            for fn in process_fns:
+                try:
+                    entries.extend(fn())
+                except CalledProcessError:
+                    pass
+            return entries
+
+        return GPUStatCollection(gpu_list, combined_processes)
+
+    @staticmethod
+    def running_processes():
+        entries = []
+        for backend in _detect_backends():
+            try:
+                entries.extend(backend.running_processes())
+            except CalledProcessError:
+                pass
+        return entries
+
     def update_process_information(self):
-        processes = self.running_processes()
+        processes = self._process_fn()
         for p in processes:
             try:
                 g = self.gpus[p['gpu_uuid']]
             except KeyError:
-                # ignore?
-                pass
+                continue
             g.add_process(p)
         return self
 
@@ -407,7 +558,7 @@ def print_gpustat(json=False, **args):
     try:
         gpu_stats = GPUStatCollection.new_query()
     except CalledProcessError:
-        sys.stderr.write('Error on calling nvidia-smi\n')
+        sys.stderr.write('Error: no GPU tools found (nvidia-smi or rocm-smi)\n')
         sys.exit(1)
 
     if json:

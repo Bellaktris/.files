@@ -139,8 +139,8 @@ def configure(repl):
       except (OSError, subprocess.SubprocessError):
         return
 
-      if result.returncode == 0 and result.stdout.strip():
-        selected = result.stdout.strip().replace('  ⏎  ', '\n')
+      if result.returncode == 0 and result.stdout.rstrip('\n'):
+        selected = result.stdout.rstrip('\n').replace('  ⏎  ', '\n')
         buf = event.app.current_buffer
         buf.text = selected
         buf.cursor_position = len(buf.text)
