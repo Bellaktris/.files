@@ -17,7 +17,7 @@ stop-screensaver=yes
 # cscale=ewa_lanczossharp
 # video-sync=display-resample
 
-hwdec=vaapi
+hwdec=auto
 hwdec-codecs=all
 # }}}
 
