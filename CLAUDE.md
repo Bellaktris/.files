@@ -19,7 +19,9 @@ Plus several gdb plugin submodules under `gdb/.gdb/`.
 When pulling, use `--recursive` (or `git submodule update --init --recursive`).
 When editing files inside `vim/` or `zsh/`, you are editing the submodule's
 working tree — commit there first, then bump the pointer in the outer repo.
-The most recent outer-repo commit (`b791d73`) is an example of this pattern.
+Edits inside the auto-fu fork are a 3-level dance: commit in
+`zsh/modules/completion/external-modules/autocompletion/`, bump the pointer in
+`zsh/`, then bump the pointer in the outer repo. Each level needs its own push.
 
 ## Install / re-run
 
@@ -84,7 +86,25 @@ vim-plug installed to `~/.vim-thirdparty`. Per-plugin tuning lives in
 and is the place for machine-local vim settings.
 
 `main/.vimrc` is an alternate bootstrap that points at the same `main.vim`
-without going through `configs.py` — useful when you can't run python.
+without going through `configs.py` — useful when you can't run python. Both
+bootstraps set `g:use_ycm = 1` and build `g:lsp_servers` guarded on
+`executable()` presence, so keep them in sync when adding servers.
+
+### vim: diagnostics and LSP
+
+With `g:use_ycm = 1` (the default), YCM is the LSP host and native nvim LSP is
+disabled (`g:native_lsp` in `vim/vimrc/main.vim`). The user-facing knob is the
+`g:lsp_servers` list set in the bootstraps; `vim/vimrc/plugin-options/youcompleteme.vim`
+maps server names to executables (`s:ycm_server_map`) and registers them via
+`g:ycm_language_server`. To add a server: add an `executable(...) | call add(g:lsp_servers, '<name>')`
+line in *both* bootstraps and, if it's not already in `s:ycm_server_map`, add
+the executable mapping there.
+
+Static linters (flake8, pylint, cpplint) run via neomake on `BufWritePost`
+through `vim/vimrc/plugin-options/neomake.vim`. The makers invoke standalone
+binaries from PATH (`exe: 'flake8'`, etc.), not `python3 -m flake8` — brew-style
+isolated CLI installs work; the linter module doesn't need to be importable
+from the active `python3`.
 
 ### tmux
 
@@ -112,7 +132,10 @@ and `bin/mpcc` (a python MPD client that wraps `fzf-tmux`).
 
 - No emojis in config files or commit messages.
 - Don't commit `.zwc` / `.zcompdump` / `.DS_Store` / `*.pyc` — `.gitignore`
-  and `git/.gitignore_global` already cover these.
+  and `git/.gitignore_global` already cover these. `*.zwc` is ignored globally
+  because `.zlogin`'s recursive `zrecompile` loops write bytecode caches into
+  nested external submodules (powerlevel9k, tmux-mem-cpu-status, etc.); the
+  global ignore keeps `git status` clean there.
 - Don't commit `*-local` override files or `vim/vimrc/secret.vim`.
 - When changing zsh behavior, prefer editing the submodule (`zsh/`) and then
   bumping the pointer here, rather than working around prezto in `runcoms/`.
