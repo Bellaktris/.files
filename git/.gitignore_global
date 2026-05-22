@@ -28,6 +28,9 @@ __pycache__
 *.pyg
 *.pyc
 
+# zsh
+*.zwc
+
 # Vim
 *~
 *swp
