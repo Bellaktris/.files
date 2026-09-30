@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# yt2ogg — download YouTube audio as .ogg with no recompression.
+#
+# YouTube serves Opus (format 251) inside a WebM container. Opus is natively an
+# Ogg codec, so we remux instead of re-encoding and the audio bitstream is
+# copied byte-for-byte. If a video has no Opus stream we bail rather than
+# silently transcode.
+#
+# Usage: ./yt2ogg <url> [url...]
+#        BROWSER=safari ./yt2ogg <url>   # cookie source (default: chrome)
+#        OUTDIR=~/Music  ./yt2ogg <url>  # destination  (default: cwd)
+
+set -euo pipefail
+
+BROWSER="${BROWSER:-chrome}"
+OUTDIR="${OUTDIR:-$PWD}"
+
+if [ $# -eq 0 ]; then
+  sed -n '2,11p' "$0" | cut -c3-
+  exit 1
+fi
+
+for bin in yt-dlp ffmpeg ffprobe; do
+  command -v "$bin" >/dev/null || { echo "yt2ogg: $bin not found" >&2; exit 1; }
+done
+
+mkdir -p "$OUTDIR"
+
+LIST="$(mktemp)"
+trap 'rm -f "$LIST"' EXIT
+
+# Trailing "(Lyric Video)", "(Live)", "[HD]" and friends are dropped from the
+# track name; a group naming a collaborator is kept. Applied repeatedly so
+# stacked suffixes like "Song (To Fall In Love) (Lyric Video)" fully reduce.
+STRIP='(?i)\s*[\(\[](?![^)\]]*\b(?:feat|ft|with)\b)[^)\]]*[\)\]]\s*$'
+
+# Cookies are required: without them YouTube's bot check 403s the media URLs
+# even though format listing succeeds.
+if ! yt-dlp \
+  --format 'bestaudio[acodec^=opus]' \
+  --cookies-from-browser "$BROWSER" \
+  --remux-video ogg \
+  --parse-metadata 'title:(?P<artist>.+?) - (?P<track>.+)' \
+  --replace-in-metadata track "$STRIP" '' \
+  --replace-in-metadata track "$STRIP" '' \
+  --replace-in-metadata track "$STRIP" '' \
+  --parse-metadata '%(artist,uploader)s:%(meta_artist)s' \
+  --parse-metadata '%(track,title)s:%(meta_title)s' \
+  --embed-metadata \
+  --no-embed-thumbnail \
+  --paths "$OUTDIR" \
+  --output '%(artist,uploader)s — %(track,title)s.%(ext)s' \
+  --print-to-file 'after_move:filepath' "$LIST" \
+  "$@"
+then
+  echo >&2
+  echo "yt2ogg: download failed." >&2
+  echo "  'Requested format is not available' means the video has no Opus" >&2
+  echo "  stream, so a lossless .ogg is impossible — only AAC is offered." >&2
+  echo "  HTTP 403 usually means stale cookies: open YouTube in $BROWSER." >&2
+  exit 1
+fi
+
+# Confirm we really remuxed. A transcode would show up as a non-opus codec.
+echo
+status=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  read -r codec rate <<<"$(ffprobe -v error -select_streams a:0 \
+    -show_entries stream=codec_name,sample_rate -of csv=p=0:s=' ' "$f")"
+  tags=$(ffprobe -v error -select_streams a:0 \
+    -show_entries stream_tags=artist,title -of csv=p=0:s=' — ' "$f")
+  if [ "$codec" = "opus" ]; then
+    printf 'ok    %s  [%s %sHz]  %s\n' "$(basename "$f")" "$codec" "$rate" "$tags"
+  else
+    printf 'WARN  %s  [%s] — not opus, audio was re-encoded\n' "$(basename "$f")" "$codec"
+    status=1
+  fi
+done < "$LIST"
+
+exit $status
