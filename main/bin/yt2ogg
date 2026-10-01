@@ -12,8 +12,8 @@
 
 set -euo pipefail
 
+OUTDIR="${HOME}/Dropbox/Music"
 BROWSER="${BROWSER:-chrome}"
-OUTDIR="${OUTDIR:-$PWD}"
 
 if [ $# -eq 0 ]; then
   sed -n '2,11p' "$0" | cut -c3-
