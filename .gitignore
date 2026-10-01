@@ -15,6 +15,7 @@ __pycache__/*
 
 python/.ptpython/history
 main/.config/mpv/watch_later/*
+main/.config/htop/htop_history
 
 main/.vimcoder/*
 !main/.vimcoder/C++Makefile
