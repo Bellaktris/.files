@@ -61,21 +61,44 @@ then
   exit 1
 fi
 
-# Confirm we really remuxed. A transcode would show up as a non-opus codec.
+# Confirm we really remuxed, then reduce the tags to artist and title.
 echo
 status=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  read -r codec rate <<<"$(ffprobe -v error -select_streams a:0 \
-    -show_entries stream=codec_name,sample_rate -of csv=p=0:s=' ' "$f")"
-  tags=$(ffprobe -v error -select_streams a:0 \
-    -show_entries stream_tags=artist,title -of csv=p=0:s=' — ' "$f")
+  # csv's separator must be a single byte, and ffprobe 9 unescapes the option
+  # string itself — so a literal space or an em dash can't be used as one.
+  IFS=, read -r codec rate <<<"$(ffprobe -v error -select_streams a:0 \
+    -show_entries stream=codec_name,sample_rate -of csv=p=0 "$f")"
+  # Queried one at a time: csv emits tags in file order, not the order asked.
+  artist=$(ffprobe -v error -select_streams a:0 \
+    -show_entries stream_tags=artist -of default=nw=1:nk=1 "$f")
+  title=$(ffprobe -v error -select_streams a:0 \
+    -show_entries stream_tags=title -of default=nw=1:nk=1 "$f")
+  tags="$artist — $title"
   if [ "$codec" = "opus" ]; then
-    printf 'ok    %s  [%s %sHz]  %s\n' "$(basename "$f")" "$codec" "$rate" "$tags"
+    # --embed-metadata also writes date, purl, genre, language, encoder and the
+    # whole video description twice (as synopsis and comment). Drop every tag and
+    # put back just these two. -c copy leaves the Opus bitstream byte-identical,
+    # so this is a container rewrite, not a transcode; +bitexact suppresses the
+    # encoder tag ffmpeg would otherwise add on the way out.
+    tmp="$(dirname "$f")/.yt2ogg.$$.ogg"
+    if ffmpeg -v error -y -i "$f" -map 0:a -c copy -map_metadata -1 \
+         -fflags +bitexact -metadata artist="$artist" -metadata title="$title" \
+         "$tmp" && mv -f "$tmp" "$f"; then
+      printf 'ok    %s  [%s %sHz]  %s\n' "$(basename "$f")" "$codec" "$rate" "$tags"
+    else
+      rm -f "$tmp"
+      printf 'WARN  %s  — tag strip failed, metadata left as-is\n' "$(basename "$f")"
+      status=1
+    fi
   else
     printf 'WARN  %s  [%s] — not opus, audio was re-encoded\n' "$(basename "$f")" "$codec"
     status=1
   fi
+  # Match the rest of the library, which is executable. Has to come after the
+  # mv above, or it would be undone by the temp file's umask-derived mode.
+  chmod 755 "$f"
 done < "$LIST"
 
 exit $status
