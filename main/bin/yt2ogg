@@ -6,7 +6,11 @@
 # copied byte-for-byte. If a video has no Opus stream we bail rather than
 # silently transcode.
 #
-# Usage: ./yt2ogg <url> [url...]
+# Artist and title are guessed from the video title, then confirmed one track at
+# a time; an edited value lands in both the tags and the filename.
+#
+# Usage: ./yt2ogg [-y] <url> [url...]
+#        -y                              take the guesses, don't prompt
 #        BROWSER=safari ./yt2ogg <url>   # cookie source (default: chrome)
 #        OUTDIR=~/Music  ./yt2ogg <url>  # destination  (default: cwd)
 
@@ -15,10 +19,41 @@ set -euo pipefail
 OUTDIR="${HOME}/Dropbox/Music"
 BROWSER="${BROWSER:-chrome}"
 
+usage() { sed -n '2,15p' "$0" | cut -c3-; }
+
+assume_yes=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -y|--yes) assume_yes=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) echo "yt2ogg: unknown option: $1" >&2; exit 1 ;;
+    *) break ;;
+  esac
+done
+
 if [ $# -eq 0 ]; then
-  sed -n '2,11p' "$0" | cut -c3-
+  usage
   exit 1
 fi
+
+# Prompting needs a controlling terminal; run as if -y when there isn't one.
+# Tested in a subshell because a failed exec redirection kills a non-interactive
+# shell outright.
+if [ "$assume_yes" -eq 0 ] && ! (exec 3</dev/tty) 2>/dev/null; then
+  assume_yes=1
+fi
+
+# Offer the guess as the default; empty input keeps it. Surrounding whitespace is
+# trimmed so it can't leak into a filename.
+ask() {
+  local prompt="$1" default="$2" reply
+  printf '%-6s [%s]: ' "$prompt" "$default" >/dev/tty
+  IFS= read -r reply </dev/tty || reply=''
+  reply="${reply#"${reply%%[![:space:]]*}"}"
+  reply="${reply%"${reply##*[![:space:]]}"}"
+  printf '%s' "${reply:-$default}"
+}
 
 for bin in yt-dlp ffmpeg ffprobe; do
   command -v "$bin" >/dev/null || { echo "yt2ogg: $bin not found" >&2; exit 1; }
@@ -75,8 +110,13 @@ while IFS= read -r f; do
     -show_entries stream_tags=artist -of default=nw=1:nk=1 "$f")
   title=$(ffprobe -v error -select_streams a:0 \
     -show_entries stream_tags=title -of default=nw=1:nk=1 "$f")
-  tags="$artist — $title"
   if [ "$codec" = "opus" ]; then
+    if [ "$assume_yes" -eq 0 ]; then
+      printf '%s\n' "$(basename "$f")" >/dev/tty
+      artist="$(ask Artist "$artist")"
+      title="$(ask Title "$title")"
+    fi
+    tags="$artist — $title"
     # --embed-metadata also writes date, purl, genre, language, encoder and the
     # whole video description twice (as synopsis and comment). Drop every tag and
     # put back just these two. -c copy leaves the Opus bitstream byte-identical,
@@ -86,6 +126,19 @@ while IFS= read -r f; do
     if ffmpeg -v error -y -i "$f" -map 0:a -c copy -map_metadata -1 \
          -fflags +bitexact -metadata artist="$artist" -metadata title="$title" \
          "$tmp" && mv -f "$tmp" "$f"; then
+      # Keep the name in step with the tags after an edit. A slash would read as
+      # a path separator, so swap in the lookalike yt-dlp itself substitutes.
+      base="${tags//\//⧸}.${f##*.}"
+      if [ -n "$artist" ] && [ -n "$title" ] && [ "$base" != "$(basename "$f")" ]; then
+        want="$(dirname "$f")/$base"
+        if [ -e "$want" ]; then
+          printf 'WARN  %s exists, left the file named %s\n' \
+            "$base" "$(basename "$f")"
+          status=1
+        elif mv -f "$f" "$want"; then
+          f="$want"
+        fi
+      fi
       printf 'ok    %s  [%s %sHz]  %s\n' "$(basename "$f")" "$codec" "$rate" "$tags"
     else
       rm -f "$tmp"
