@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """
 the gpustat script :)
@@ -16,6 +16,9 @@ try:
 except ImportError:
     from io import StringIO
 import sys
+import os
+import re
+import glob
 import locale
 import platform
 import json
@@ -58,9 +61,11 @@ class GPUStat(object):
         self.entry = entry
         self.processes = []
 
-        # Handle '[Not Supported] for old GPU cards (#6)
+        # Handle '[Not Supported] for old GPU cards (#6). Backends that
+        # cannot report a field at all pass None for it already.
         for k in self.entry.keys():
-            if 'Not Supported' in self.entry[k]:
+            v = self.entry[k]
+            if v is None or 'Not Supported' in v:
                 self.entry[k] = None
 
 
@@ -207,6 +212,10 @@ class GPUStat(object):
 class NvidiaBackend(object):
 
     @staticmethod
+    def is_available():
+        return shutil.which('nvidia-smi') is not None
+
+    @staticmethod
     def query_gpus():
         gpu_query_columns = ('index', 'uuid', 'name', 'temperature.gpu',
                              'utilization.gpu', 'memory.used', 'memory.total')
@@ -284,6 +293,10 @@ class NvidiaBackend(object):
 
 
 class AMDBackend(object):
+
+    @staticmethod
+    def is_available():
+        return shutil.which('rocm-smi') is not None
 
     @staticmethod
     def _find_json_key(d, *substrings):
@@ -400,12 +413,188 @@ class AMDBackend(object):
         return process_entries
 
 
+class AmdgpuSysfsBackend(object):
+    """
+    Reads the amdgpu driver's sysfs nodes directly, which covers Radeon cards
+    and APUs on machines without ROCm installed. Keeps AMDBackend's uuid
+    scheme so a card cannot be listed twice if both ever run.
+    """
+
+    SYSFS_ROOT = '/sys/class/drm'
+
+    @staticmethod
+    def _cards():
+        """Returns [(card number, device directory)], sorted by card number."""
+        cards = []
+        for path in glob.glob(os.path.join(AmdgpuSysfsBackend.SYSFS_ROOT, 'card*')):
+            basename = os.path.basename(path)
+            # card0 is the device; card0-HDMI-A-1 and friends are connectors
+            if not re.match(r'^card\d+$', basename):
+                continue
+            device = os.path.join(path, 'device')
+            driver = os.path.realpath(os.path.join(device, 'driver'))
+            if os.path.basename(driver) != 'amdgpu':
+                continue
+            cards.append((int(basename[len('card'):]), device))
+        return sorted(cards)
+
+    @staticmethod
+    def _read(path):
+        try:
+            with open(path) as fp:
+                return fp.read().strip()
+        except (IOError, OSError):
+            return None
+
+    @staticmethod
+    def _scaled(path, divisor):
+        v = AmdgpuSysfsBackend._read(path)
+        if v is None:
+            return None
+        try:
+            return str(int(v) // divisor)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _temperature(device):
+        for node in sorted(glob.glob(os.path.join(device, 'hwmon', 'hwmon*',
+                                                  'temp1_input'))):
+            # hwmon reports millidegrees
+            temp = AmdgpuSysfsBackend._scaled(node, 1000)
+            if temp is not None:
+                return temp
+        return None
+
+    @staticmethod
+    def is_available():
+        return bool(AmdgpuSysfsBackend._cards())
+
+    @staticmethod
+    def query_gpus():
+        gpu_list = []
+
+        for idx, (card_num, device) in enumerate(AmdgpuSysfsBackend._cards()):
+            mb = lambda f: AmdgpuSysfsBackend._scaled(
+                os.path.join(device, f), 1024 * 1024)
+
+            name = AmdgpuSysfsBackend._read(os.path.join(device, 'product_name'))
+
+            g = GPUStat({
+                'index': str(idx),
+                'uuid': 'AMD-GPU-' + str(card_num),
+                'name': name or 'AMD GPU ' + str(card_num),
+                'temperature.gpu': AmdgpuSysfsBackend._temperature(device),
+                'utilization.gpu': AmdgpuSysfsBackend._read(
+                    os.path.join(device, 'gpu_busy_percent')),
+                'memory.used': mb('mem_info_vram_used'),
+                'memory.total': mb('mem_info_vram_total'),
+            })
+            gpu_list.append(g)
+
+        return gpu_list
+
+    @staticmethod
+    def running_processes():
+        # sysfs exposes no per-process accounting; that needs ROCm or the
+        # fdinfo interface, which is per-pid rather than per-card.
+        return []
+
+
+class AppleBackend(object):
+    """
+    Apple Silicon exposes GPU utilization and resident GPU memory through
+    IOKit without root. Temperature and per-process accounting are not
+    exposed at all. Memory is unified, so memory.total is system RAM rather
+    than a dedicated VRAM pool.
+    """
+
+    @staticmethod
+    def is_available():
+        # AGXAccelerator exists on Apple Silicon only
+        return sys.platform == 'darwin' and platform.machine() == 'arm64'
+
+    @staticmethod
+    def _text(value, default=None):
+        if value is None:
+            return default
+        if isinstance(value, bytes):
+            value = value.decode('utf-8', 'replace')
+        return str(value).rstrip('\x00').strip() or default
+
+    @staticmethod
+    def query_gpus():
+        import plistlib
+
+        try:
+            raw = check_output('ioreg -r -d 1 -w 0 -a -c AGXAccelerator',
+                               shell=True)
+            nodes = plistlib.loads(raw)
+        except Exception:
+            # no accelerator node, or ioreg emitted something unparseable
+            return []
+
+        if not nodes:
+            return []
+
+        gpu_list = []
+        total = AppleBackend._unified_memory()
+
+        for idx, node in enumerate(nodes):
+            stats = node.get('PerformanceStatistics') or {}
+
+            used = stats.get('In use system memory')
+            if used is None:
+                used = stats.get('Alloc system memory')
+
+            util = stats.get('Device Utilization %')
+
+            g = GPUStat({
+                'index': str(idx),
+                'uuid': 'APPLE-GPU-' + str(idx),
+                'name': AppleBackend._text(node.get('model'), 'Apple GPU'),
+                'temperature.gpu': None,
+                'utilization.gpu': AppleBackend._text(util),
+                'memory.used': AppleBackend._megabytes(used),
+                'memory.total': total,
+            })
+            gpu_list.append(g)
+
+        return gpu_list
+
+    @staticmethod
+    def _megabytes(num_bytes):
+        if num_bytes is None:
+            return None
+        try:
+            return str(int(num_bytes) // (1024 * 1024))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _unified_memory():
+        try:
+            return AppleBackend._megabytes(execute_process('sysctl -n hw.memsize'))
+        except CalledProcessError:
+            return None
+
+    @staticmethod
+    def running_processes():
+        return []
+
+
 def _detect_backends():
     backends = []
-    if shutil.which('nvidia-smi'):
+    if NvidiaBackend.is_available():
         backends.append(NvidiaBackend)
-    if shutil.which('rocm-smi'):
+    # the sysfs reader is a fallback for AMDBackend, not a complement: both
+    # describe the same cards, so running them together would double-list
+    if AMDBackend.is_available():
         backends.append(AMDBackend)
+    elif AmdgpuSysfsBackend.is_available():
+        backends.append(AmdgpuSysfsBackend)
+    if AppleBackend.is_available():
+        backends.append(AppleBackend)
     return backends
 
 
@@ -415,6 +604,10 @@ class GPUStatCollection(object):
         self.gpus = OrderedDict()
         for g in gpu_list:
             self.gpus[g.uuid] = g
+
+        # each backend numbers its own cards from zero, so renumber the set
+        for idx, g in enumerate(self.gpus.values()):
+            g.entry['index'] = str(idx)
 
         self._process_fn = process_fn
         self.update_process_information()
@@ -426,7 +619,7 @@ class GPUStatCollection(object):
     def new_query():
         backends = _detect_backends()
         if not backends:
-            raise CalledProcessError(1, 'No GPU tools found (nvidia-smi or rocm-smi)')
+            raise CalledProcessError(1, 'No supported GPU found')
 
         gpu_list = []
         process_fns = []
@@ -545,8 +738,8 @@ def self_test():
 
 def new_query():
     '''
-    Obtain a new GPUStatCollection instance by querying nvidia-smi
-    to get the list of GPUs and running process information.
+    Obtain a new GPUStatCollection instance by querying every available
+    backend for the list of GPUs and running process information.
     '''
     return GPUStatCollection.new_query()
 
@@ -558,7 +751,7 @@ def print_gpustat(json=False, **args):
     try:
         gpu_stats = GPUStatCollection.new_query()
     except CalledProcessError:
-        sys.stderr.write('Error: no GPU tools found (nvidia-smi or rocm-smi)\n')
+        sys.stderr.write('Error: no supported GPU found\n')
         sys.exit(1)
 
     if json:
