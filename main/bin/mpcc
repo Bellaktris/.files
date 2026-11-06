@@ -1,353 +1,425 @@
-#!/usr/bin/env python3
-# -*- coding: <utf-8> -*-
+#!/usr/bin/env zsh
+# mpcc - mpd client built on mpc, fzf and the zsh completion system.
+#
+# Scheduling (the "up next" block)
+#
+#   mpd's queue is one flat list with a cursor in it, so there is no up-next.
+#   mpcc makes one out of two things mpd does have: scheduled songs sit
+#   immediately after the current song, and they carry a non-zero priority.
+#
+#     position  gives the order when playing in sequence
+#     priority  gives the order when random mode is on
+#     and mpd clears the priority as soon as a song starts playing, so the
+#     block drains itself as you listen - nothing to clean up
+#
+#   next and prev honour it in both modes, because the block is what comes next
+#   by either measure.
+#
+# Naming a song: zsh completion and fzf, and they compose.
+#
+#   mpcc then Birds<TAB>     complete from the database, inline
+#   mpcc then                browse and multi-select in fzf
+#   mpcc then zaz            hand "zaz" to fzf as its initial filter, so a
+#                            single match is taken without prompting
+#
+# Commands
+#
+#   (none) | status | list [n]   status, the up-next block and the queue
+#   sched                        just the up-next block
+#
+#   then   [artist|all] [query]  schedule after everything already scheduled
+#   next   [artist|all] <query>  schedule to play next, ahead of the block
+#   next                         skip to the next song
+#   next - [artist|all] [query]  browse in fzf, then schedule to play next
+#   push   [query]               schedule a song already in the queue
+#   add    [artist|all] [query]  append to the far end, not scheduled
+#
+#   play   [n|query]             resume, play position n, or pick from queue
+#   prev | toggle | pause | stop | shuffle | clear
+#   remove [query]               drop songs from the queue
+#   <anything else>              passed straight to mpc
+#
+# MPCC_SLICE sets how many queue lines the status view shows.  See _mpcc for
+# the completions.
 
-"""Extended music player daemon client."""
+emulate -L zsh
+setopt extended_glob pipe_fail
 
+local -r GREEN=$'\e[32m' RED=$'\e[31m' CYAN=$'\e[36m' DIM=$'\e[2m' RESET=$'\e[0m'
+local -ri SLICE=${MPCC_SLICE:-20}
+local -r TAB=$'\t'
+# mpd takes priorities 0-255, 0 meaning "not scheduled".  Counting down from
+# the top keeps priority order and position order pointing the same way.
+local -ri PRIO_TOP=255
 
-import re
-import os
-import shutil
-import sys
-import copy
+die () { print -u2 -- "mpcc: $*"; exit 1 }
 
-from subprocess import Popen
-from subprocess import PIPE
-from subprocess import check_output
+(( $+commands[mpc] )) || die "mpc not found"
+(( $+commands[fzf] )) || die "fzf not found"
+mpc version &>/dev/null || die "cannot reach mpd on ${MPD_HOST:-localhost}:${MPD_PORT:-6600}"
 
-from mpd import MPDClient
+# --- plumbing ---
 
-from functools import partial
-
-client = MPDClient()
-client.connect("localhost", 6600)
-
-client.iterate = True
-
-def toggle():
-    if client.status()['state'] == 'pause':
-        client.setstate(0)
-    else:
-        client.setstate(1)
-
-
-def getposition():
-    return int(client.currentsong().get('pos', -1))
-
-def printposition():
-    print(getposition() + 1)
-
-client.prev = client.previous
-client.toggle = toggle
-client.setstate = client.pause
-client.pause = partial(client.pause, 1)
-client.getposition = printposition
-
-
-class MpdException(Exception):
-    def __init__(self, value):
-        self.value = value
-    def __str__(self):
-        return "\033[31mMpdException:\033[0m %s" % repr(self.value)[1:-1]
-
-
-maxwidth = {
-    'pos': '%4d',
-    'artist': '%-36s',
-    'file': '%-75s',
-    'title': '%-48s'
+# $COLUMNS is unset in a script, and the old mpcc asked tmux, which made it die
+# outside tmux.
+width () {
+	local -i w=${COLUMNS:-0}
+	(( w )) || w=$(tput cols 2>/dev/null) || w=80
+	print -- $(( w > 20 ? w : 80 ))
 }
 
-def pretify(_song, tags):
-    """Extract tags from song info and justify."""
-    song = copy.deepcopy(_song)
-
-    if 'pos' in song:
-        song['pos'] = int(song['pos']) + 1
-
-    for tag in tags:
-        if tag not in song:
-            song[tag] = "None"
-
-    if song['artist'] == 'None':
-        if 'album' in song:
-            song['artist'] = song['album']
-
-    formatstring = ' '.join([maxwidth[tag] for tag in tags])
-    return formatstring % tuple((song[tag] for tag in tags))
-
-
-def selectsongs(listtype, tags, query, fake=False):
-    """Return list of selected songs."""
-
-    if listtype == 'database':
-        songs = list(client.listallinfo())
-    if listtype == 'playlist':
-        songs = list(client.playlistinfo())
-
-    numpattern = '(\d+|\d+-\d+)(\s*,\d+|\s*,\d+-\d+)*'
-
-    if not fake and query in ['all', 'deep', 'shallow']:
-        result = songs
-        if query == 'shallow':
-            result = []
-
-            for song in songs:
-                if 'file' in song and '/' not in song['file']:
-                    result += [song]
-
-        return result
-
-    elif not fake and re.match(numpattern, query) is not None:
-        ranges = [i.strip().split('-') for i in query.split(',')]
-
-        positions = []
-        for i in ranges:
-            if len(i) == 1:
-                positions += [int(i[0])]
-            else:
-                if int(i[0]) > int(i[1]):
-                    raise MpdException('wrong range')
-
-                positions += list(range(int(i[0]), int(i[1]) + 1))
-
-        positions = sorted(set(positions))
-        songs.sort(key=lambda song: int(song['pos']))
-
-        result = []
-        for i in positions:
-            result += [songs[i - 1]]
-
-        return result
-
-    else:
-        selectfrom = {}
-        for i, song in enumerate(songs):
-            try:
-                key = pretify(song, tags)
-                selectfrom[key] = selectfrom.get(key, []) + [i]
-            except KeyError:
-                pass
-
-        stdin = '\n'.join(sorted(selectfrom.keys()))
-
-        if shutil.which('fzf-tmux') is None:
-            raise MpdException('fzf not found')
-
-        cmdline = 'fzf-tmux -d 80% ' if not fake else 'fzf '
-        cmdline += '--ansi --select-1 --exit-0 '
-        cmdline += '--tiebreak=begin,length '
-        cmdline += '--bind=ctrl-a:toggle-all '
-        cmdline += '-i -m --delimiter=" " --nth=".." '
-
-        if not fake:
-            cmdline += '--query="' + query + '"'
-        else:
-            stdin = re.sub('  +','\n',stdin)
-            cmdline += '--filter="' + query + '"'
-
-        stdout, _ = Popen(cmdline, stdin=PIPE, stdout=PIPE, shell=True)\
-                .communicate(input=stdin.encode('utf8'))
-
-        if fake:
-            stdout = reversed(stdout.decode('utf-8').splitlines())
-            print('\n'.join([line.strip() for line in stdout]))
-            quit()
-
-        if stdout.decode('utf-8') == '':
-            raise MpdException('empty selection')
-
-        selections = stdout.decode('utf-8').splitlines()
-        result = []
-
-        for selection in selections:
-            for i in selectfrom[selection]:
-                if query == 'shallow' and '/' in songs[i]['file']:
-                    continue
-
-                result += [songs[i]]
-
-        return result
-
-
-def add(tags, query, fakeselect=False):
-    """Add selected songs into playlist."""
-    songs = selectsongs('database', tags, query, fakeselect)
-    for song in songs:
-        if 'file' in song:
-            client.add(song['file'])
-
-    getattr(client, "shuffle", None)()
-
-def remove(tags, query, fakeselect=False):
-    """Remove selected songs from playlist."""
-    songs = selectsongs('playlist', tags, query, fakeselect)
-    for song in songs:
-        if 'id' in song:
-            client.deleteid(int(song['id']))
-
-
-def push(tags, query, fakeselect=False):
-    """Queue selected songs."""
-    songs = selectsongs('playlist', tags, query, fakeselect)
-
-    for song in songs:
-        if int(song['pos']) > getposition():
-            client.moveid(song['id'], getposition() + 1)
-        elif int(song['pos']) < getposition():
-            client.moveid(song['id'], getposition())
-
-    return len(songs)
-
-
-queue = push
-
-
-def pop(tags, query, fakeselect=False):
-    """Queue selected songs."""
-    length = push(tags, query, fakeselect)
-    currentsong = client.currentsong()
-    where = int(currentsong['pos']) + length
-
-    client.moveid(int(currentsong['id']), where)
-
-
-def play(tags, query, fakeselect=False):
-    """Queue selected songs and play first of them."""
-    try:
-        push(tags, query, fakeselect)
-    except MpdException as e:
-        if repr(e) != "MpdException('empty selection',)":
-            raise e
-
-        if client.status()['state'] == 'pause':
-            client.setstate(0)
-
-        quit()
-    client.play(getposition() + 1)
-
-
-def printlist(N=10):
-    """List N around the current position."""
-    songs = client.playlistinfo()
-
-    tags = ('pos', 'artist', 'title')
-    lines = [pretify(song, tags) for song in songs]
-
-    if len(lines) == 0:
-        print('I have an empty list.')
-        quit()
-
-    command = ['tmux', 'display', '-p', '"#{pane_width}"']
-    width = int(check_output(command).decode('utf-8')[1:-2])
-
-    currentsong = client.currentsong()
-    if 'pos' in currentsong:
-        position = int(currentsong['pos'])
-    else:
-        position = -1
-
-    def wrapline(line, width):
-        if len(line) < width:
-            return line
-
-        return line[:width - 3] + ' ..'
-
-    lines = [wrapline(line.rstrip(), width) for line in lines]
-    lines[position] = '\033[32m' + lines[position] + '\033[0m'
-
-    start = max(position - N//3, 0)
-    end = min(position + N, len(lines))
-    lines = reversed(lines[start:end])
-
-    print('\n'.join(lines))
-
-
-def printhelp():
-    """Print help message."""
-    helpmessage = """
-    \033[36musage: mpc <command> [<arguments>]\033[0m
-
-    \033[36mcommands:\033[0m
-         \033[36madd <query>\033[0m
-              Open  interactive  selection  from  mpd  database  starting  with
-              <query>  and  add  the  result   to  mpd  playlist  You  can  use
-              special <query>="artist  <query>" to choose from  artist list Use
-              <query>=all to select every song.
-
-         \033[36minsert <query>\033[0m
-              Same as  add, but  insert selection  after the  currently playing
-              song. You can use special <query>="artist <query>" to choose from
-              the artist list.
-
-         \033[36mremove <query>\033[0m
-              Same as  add, but  insert selection  after the  currently playing
-              song You can use special  <query>="artist <query>" to choose from
-              the artist list.
-
-         \033[36mpush <query>\033[0m
-              Open  interactive  selection  from  mpd  playlist  starting  with
-              <query> and add the result  after currently playing song. You can
-              use special  <query>="artist <query>"  to choose from  the artist
-              list.
-
-         \033[36mplay <song>\033[0m
-              Start playing  from <song>, <song> can  be number or part  of the
-              name. The default value is 1.
-
-         \033[36mlist\033[0m
-              Show 9 items from playlist around the currently playing song.
-
-    And you  can use  any command  that original  mpc support  and that  is not
-    redefined here."""
-    print(helpmessage + '\n')
-
-
-def parseinput(argv, tagdict):
-    """Parse input arguments and assign tags and query variables."""
-    if len(argv) > 0 and argv[0] in tagdict:
-        return (argv[0],), ' '.join(argv[1:])
-    return ('artist', 'title'), ' '.join(argv)
-
-
-def unsupported_command():
-    raise MpdException("unsupported command")
-
-
-def main():
-    """Main function to assist multithreading."""
-    if len(sys.argv) == 1:
-        printlist()
-        quit()
-
-    if sys.argv[1] == 'help':
-        printhelp()
-        quit()
-
-    fakeselect = False
-    tagdict = {'artist': True}
-
-    if sys.argv[1] == 'zshcomplete':
-        fakeselect = True
-        sys.argv.remove('zshcomplete')
-
-    if sys.argv[1] == 'list':
-        if len(sys.argv) <= 2:
-            printlist()
-        else:
-            printlist(int(sys.argv[2]))
-
-        quit()
-
-    if sys.argv[1] in ['add', 'remove', 'queue', 'push', 'pop', 'play']:
-        func = getattr(sys.modules[__name__], sys.argv[1])
-        func(*parseinput(sys.argv[2:], tagdict), fakeselect=fakeselect)
-
-    else:
-        getattr(client, sys.argv[1], unsupported_command)()
-
-
-if __name__ == '__main__':
-    try:
-        main()
-    except MpdException as exception:
-        print(exception)
+clip () {
+	local -i w=$(width)
+	local line
+	for line in "$@"; do
+		if (( ${(m)#line} > w )); then
+			print -r -- "${line[1,w-3]} .."
+		else
+			print -r -- "$line"
+		fi
+	done
+}
+
+# Pick from a "key<TAB>label" list on stdin, print the keys chosen.  Honours
+# FZF_DEFAULT_OPTS (which already sets -m -1 --ansi --tiebreak=...) and splits
+# the pane inside tmux, like the old mpcc did.
+pick () {
+	local prompt="$1" query="$2"
+	local -a fzf
+	if [[ -n ${TMUX-} ]] && (( $+commands[fzf-tmux] )); then
+		fzf=(fzf-tmux -d 80%)
+	else
+		fzf=(fzf)
+	fi
+	# --with-nth hides the key and is also what fzf searches; adding --nth on
+	# top would index the *transformed* line and match nothing.
+	"${fzf[@]}" --exit-0 --bind=ctrl-a:toggle-all \
+		--prompt="${prompt} " --delimiter='\t' --with-nth=2.. \
+		${query:+--query=$query} | cut -d"$TAB" -f1
+}
+
+# Every song in the database as "uri<TAB>artist - title".  `mpc listall` prints
+# bare URIs and ignores --format, hence the match-everything search.
+library () {
+	mpc -f "%file%${TAB}%artist% — %title%" search filename ''
+}
+
+queue () {
+	mpc -f "%position%${TAB}%artist% — %title%" playlist
+}
+
+queue_len () {
+	mpc -f '%position%' playlist | tail -1
+}
+
+# Position of the current song, 0 when stopped.
+current_pos () {
+	local p; p=$(mpc -f '%position%' current 2>/dev/null)
+	print -- ${p:-0}
+}
+
+# --- the up-next block ---
+
+# Positions of scheduled songs, in queue order.
+sched_positions () {
+	mpc --with-prio -f '%position%' playlist 2>/dev/null
+}
+
+# Where the block ends: the last scheduled position after the current song, or
+# the current song itself when nothing is scheduled.
+sched_end () {
+	local -i cur=$(current_pos) last=0 p
+	for p in $(sched_positions); do
+		(( p > cur && p > last )) && last=$p
+	done
+	(( last )) || last=$cur
+	print -- $last
+}
+
+# Renumber the block so priority order matches position order again.
+reprioritise () {
+	local -a pos
+	pos=( ${(f)"$(sched_positions)"} )
+	local -i i prio
+	for (( i = 1; i <= $#pos; i++ )); do
+		prio=$(( PRIO_TOP - i ))
+		(( prio < 1 )) && prio=1
+		mpc prio $prio $pos[i] >/dev/null
+	done
+}
+
+# Move the queue entry at $1 to position $2 and mark it scheduled.
+schedule_at () {
+	local -i from="$1" to="$2"
+	(( to < 1 )) && to=1
+	(( from == to )) || mpc move $from $to >/dev/null
+	mpc prio $(( PRIO_TOP - 1 )) $to >/dev/null
+}
+
+# --- views ---
+
+# mpc status prints the song, a transport line and an options line, and adds an
+# ERROR line when something is wrong - which of those are present depends on
+# the state, so pick them out by shape rather than by position.
+status_tail () {
+	local -a kinds=( "$@" )
+	local -a st
+	st=( ${(f)"$(mpc status 2>/dev/null)"} )
+	local line
+	for line in $st; do
+		case $line in
+			(\[*)      (( $kinds[(I)transport] )) && print -- "$line" ;;
+			(volume:*) (( $kinds[(I)options] ))   && print -- "${DIM}${line}${RESET}" ;;
+			(ERROR:*)  (( $kinds[(I)error] ))     && print -- "${RED}${line}${RESET}" ;;
+		esac
+	done
+	return 0
+}
+
+now () {
+	local song
+	song=$(mpc -f "%artist% — %title%" current 2>/dev/null)
+	if [[ -n $song ]]; then
+		clip "${GREEN}${song}${RESET}"
+	else
+		print -- "${DIM}stopped${RESET}"
+	fi
+	status_tail transport error
+}
+
+# Status with the queue around the current song.  Upcoming songs are printed
+# above the current one, so what is playing stays next to the prompt; scheduled
+# songs are marked in the gutter.
+#
+# $1 is how many queue entries to show (default $SLICE).  The window keeps a
+# quarter of itself on songs already played - those end up at the bottom,
+# nearest the prompt - and slides rather than shrinks at either end of the
+# queue, so the view is the same height wherever the cursor happens to be.
+show () {
+	local -i rows=${1:-$SLICE}
+	local -a lines
+	lines=( ${(f)"$(mpc -f "%position%${TAB}%prio%${TAB}%artist% — %title%" playlist)"} )
+	(( $#lines )) || {
+		print -- "${DIM}queue is empty${RESET}"
+		status_tail options error
+		return 0
+	}
+
+	local -i total=$#lines
+	(( rows > total )) && rows=$total
+	(( rows < 1 )) && rows=1
+
+	local -i cur=$(current_pos)
+	local -i back=$(( rows / 4 ))
+	local -i from to
+	if (( cur )); then
+		from=$(( cur - back ))
+	else
+		from=1
+	fi
+	to=$(( from + rows - 1 ))
+	(( to > total )) && { to=total; from=$(( to - rows + 1 )) }
+	(( from < 1 )) && { from=1; to=$(( from + rows - 1 )) }
+
+	local -i i
+	local pos prio label gutter
+	for (( i = to; i >= from; i-- )); do
+		pos=${lines[i]%%$TAB*}
+		prio=${${lines[i]#*$TAB}%%$TAB*}
+		label=${lines[i]##*$TAB}
+		(( prio )) && gutter="${CYAN}»${RESET}" || gutter=' '
+		if (( i == cur )); then
+			clip "${GREEN}${(l:3:)pos} ▸ ${label}${RESET}"
+		else
+			clip "${(l:3:)pos} ${gutter} ${label}"
+		fi
+	done
+
+	# Separate the queue from the status block below it.
+	print
+	status_tail transport options error
+}
+
+sched () {
+	local -a lines
+	lines=( ${(f)"$(mpc --with-prio -f "%position%${TAB}%artist% — %title%" playlist)"} )
+	(( $#lines )) || { print -- "${DIM}nothing scheduled${RESET}"; return 0 }
+	local line
+	for line in $lines; do
+		clip "${(l:3:)${line%%$TAB*}} ${CYAN}»${RESET} ${line#*$TAB}"
+	done
+}
+
+# --- choosing songs ---
+
+# "artist <query>" picks from the artist list and takes everything they have,
+# "all" takes the whole library, anything else picks songs.  Prints URIs.
+choose () {
+	local prompt="$1"; shift
+	local mode=song
+	case "${1-}" in
+		(artist) mode=artist; shift ;;
+		(all)    mode=all;    shift ;;
+	esac
+	local query="$*"
+
+	case $mode in
+		(all)
+			library | cut -d"$TAB" -f1
+			;;
+		(artist)
+			local -a artists picked
+			artists=( ${(f)"$(mpc list artist | awk -v t="$TAB" '{ print $0 t $0 }')"} )
+			picked=( ${(f)"$(print -rl -- $artists | pick "artist>" "$query")"} )
+			local a
+			for a in $picked; do
+				mpc -f '%file%' find artist "$a"
+			done
+			;;
+		(song)
+			library | pick "$prompt" "$query"
+			;;
+	esac
+}
+
+# --- commands ---
+
+# where: front (play next) | back (after what is scheduled) | end (unscheduled)
+put () {
+	local where="$1"; shift
+	local prompt="$1"; shift
+	local -a uris
+	uris=( ${(f)"$(choose "$prompt" "$@")"} )
+	(( $#uris )) || return 0
+
+	if [[ $where == end ]]; then
+		print -rl -- $uris | mpc add >/dev/null
+		print -- "added $#uris song(s) to the end of the queue"
+		show
+		return 0
+	fi
+
+	local -i cur=$(current_pos)
+	local -i target
+	if [[ $where == front ]]; then
+		target=$(( cur + 1 ))
+	else
+		target=$(( $(sched_end) + 1 ))
+	fi
+
+	# Append, then move into place: mpc insert can only land right after the
+	# current song, which is not where the back of the block is.
+	local uri
+	local -i len
+	for uri in $uris; do
+		len=$(queue_len)
+		print -r -- "$uri" | mpc add >/dev/null
+		schedule_at $(( len + 1 )) $target
+		(( target++ ))
+	done
+	reprioritise
+
+	print -- "scheduled $#uris song(s) ${where:s/front/to play next/:s/back/after the block/}"
+	show
+}
+
+# Schedule songs that are already in the queue.
+push () {
+	local -a picked
+	picked=( ${(f)"$(queue | pick "push>" "$*")"} )
+	(( $#picked )) || return 0
+
+	# Positions shift with every move, so remember the songs by uri.
+	local -a uris
+	local p
+	for p in $picked; do
+		uris+=( "$(mpc -f '%file%' playlist | sed -n "${p}p")" )
+	done
+
+	local -i target=$(( $(sched_end) + 1 )) pos cur
+	local uri
+	for uri in $uris; do
+		cur=$(current_pos)
+		pos=$(mpc -f '%file%' playlist | grep -n -x -F -- "$uri" | head -1 | cut -d: -f1)
+		(( pos )) || continue
+		# Removing a song from before the current one shifts everything after
+		# it left by one, and mpd applies <to> to the queue after the removal.
+		(( pos < target )) && (( target-- ))
+		schedule_at $pos $target
+		(( target++ ))
+	done
+	reprioritise
+	print -- "scheduled $#uris song(s) already in the queue"
+	show
+}
+
+remove () {
+	local -a picked
+	picked=( ${(f)"$(queue | pick "remove>" "$*")"} )
+	(( $#picked )) || return 0
+	# Delete from the back so earlier positions stay valid.
+	local p
+	for p in ${(On)picked}; do
+		mpc del $p >/dev/null
+	done
+	print -- "removed $#picked song(s)"
+	show
+}
+
+play () {
+	if (( ! $# )); then
+		mpc play >/dev/null
+	elif [[ $1 == <-> ]]; then
+		mpc play $1 >/dev/null
+	else
+		local pos
+		pos=$(queue | pick "play>" "$*" | head -1)
+		[[ -n $pos ]] || return 0
+		mpc play $pos >/dev/null
+	fi
+	now
+}
+
+# --- dispatch ---
+
+local cmd="${1-}"
+(( $# )) && shift
+
+case $cmd in
+	(''|status)      show ;;
+	(list)           show "$@" ;;
+	(sched|scheduled) sched ;;
+
+	(then)           put back  'then>' "$@" ;;
+	(insert)         put front 'next>' "$@" ;;
+	(add)            put end   'add>'  "$@" ;;
+	(next)
+		if (( ! $# )); then
+			mpc next >/dev/null; now
+		elif [[ $1 == - ]]; then
+			shift; put front 'next>' "$@"
+		else
+			put front 'next>' "$@"
+		fi ;;
+
+	(push)           push "$@" ;;
+	(remove|rm)      remove "$@" ;;
+	(play)           play "$@" ;;
+	(prev)           mpc prev >/dev/null; now ;;
+	(toggle|pause)   mpc $cmd >/dev/null; now ;;
+	(stop)           mpc stop >/dev/null; now ;;
+	(shuffle)        mpc shuffle >/dev/null; show ;;
+	(clear)          mpc clear >/dev/null; print -- "queue cleared" ;;
+
+	(help|-h|--help)
+		# The header comment above is the help text.
+		local -a doc
+		doc=( ${(f)"$(<${0:A})"} )
+		local -i i
+		for (( i = 2; i <= $#doc; i++ )); do
+			[[ $doc[i] == \#* ]] || break
+			print -r -- "${${doc[i]#\#}# }"
+		done ;;
+
+	(*)              exec mpc $cmd "$@" ;;
+esac

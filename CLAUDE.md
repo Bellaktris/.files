@@ -126,7 +126,9 @@ imperative subject; multi-action commits list the actions
 
 `main/` mirrors `$HOME` layout: top-level dotfiles (`.vimrc`, `.tmux.conf`,
 `.inputrc`, `.dir_colors`), `.config/{htop,nvim,mpv,cppman}`, `.local/bin/`,
-and `bin/mpcc` (a python MPD client that wraps `fzf-tmux`).
+and `bin/mpcc` (an mpd client in zsh over `mpc` + fzf; its completion is
+`zsh/modules/completion/completions/_mpcc`, and it keeps an up-next block out
+of mpd song priorities).
 
 ## Conventions
 
