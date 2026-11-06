@@ -68,3 +68,5 @@ compile_commands.json
 
 # node #
 node_modules
+
+**/.claude/settings.local.json
