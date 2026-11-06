@@ -23,6 +23,7 @@ import os
 import pathlib
 import re
 import sys
+import unicodedata
 
 # oggtag sits next to this script and has no .py suffix, so importlib cannot
 # infer a loader for it - name one.
@@ -37,6 +38,18 @@ except (OSError, ImportError) as exc:
 
 # Friendly names for the mpd tags that have none, or an unobvious one.
 FIELD_TAGS = {"lang": "GROUPING", "genre": "GENRE", "mood": "MOOD"}
+
+
+def nfc(text):
+    """Compare names in one normal form.
+
+    Filenames here come off disk decomposed (19 of them: anything with й, ç,
+    ö and friends) while the artist tag inside the same file is composed, and
+    a tags.conf typed in an editor is composed too.  Without this, a song key
+    for one of those files silently matches nothing.
+    """
+    return unicodedata.normalize("NFC", text)
+
 
 DEFAULT_MUSIC_DIR = pathlib.Path.home() / "Dropbox" / "Music"
 
@@ -87,15 +100,15 @@ def parse_conf(path):
             name = name.strip().lower()
             seen.add(name)
             fields[name] = [v.strip() for v in values.split(",") if v.strip()]
-        (artists if section == "artist" else songs)[key] = fields
+        (artists if section == "artist" else songs)[nfc(key)] = fields
     return artists, songs, seen
 
 
 def wanted(path, artists, songs, current):
     """The managed tags this file should end up with."""
-    artist = next((v for k, v in current if k == "ARTIST"), "")
+    artist = nfc(next((v for k, v in current if k == "ARTIST"), ""))
     fields = dict(artists.get(artist, {}))
-    fields.update(songs.get(path.stem, {}))
+    fields.update(songs.get(nfc(path.stem), {}))
     return {FIELD_TAGS.get(n, n.upper()): v for n, v in fields.items()}
 
 
