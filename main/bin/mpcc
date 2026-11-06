@@ -23,6 +23,10 @@
 #                            single match is taken without prompting
 #   mpcc then a b c          one query per argument, scheduled in that order
 #
+# A whole group - an artist, a genre, "all" - is scheduled in random order,
+# since its database order is alphabetical and would otherwise never vary.
+# Songs named or picked individually keep the order you gave them.
+#
 # Commands
 #
 #   (none) | status | list [n]   status, the up-next block and the queue
@@ -119,6 +123,27 @@ pick () {
 	"${fzf[@]}" --exit-0 --bind=ctrl-a:toggle-all \
 		--prompt="${prompt} " --delimiter='\t' --with-nth=2.. \
 		${query:+--query=$query} | cut -d"$TAB" -f1
+}
+
+# Fisher-Yates over the array named $1, in place.  A group arrives in mpd's
+# database order, which is alphabetical by filename and so never varies.
+#
+# In place rather than through a command substitution: $RANDOM in a subshell
+# continues from the parent's seed without advancing it, so every
+# $(randomize ...) in a single run would deal exactly the same hand.
+#
+# Underscored locals: the assignment at the end has to see the caller's array,
+# so a local of the same name here would shadow it.
+randomize () {
+	local _name="$1"
+	local -a _a=( "${(@P)_name}" )
+	local -i _i _j
+	local _t
+	for (( _i = $#_a; _i > 1; _i-- )); do
+		(( _j = RANDOM % _i + 1 ))
+		(( _i == _j )) || { _t=$_a[_i]; _a[_i]=$_a[_j]; _a[_j]=$_t }
+	done
+	set -A "$_name" "${(@)_a}"
 }
 
 # Every song in the database as "uri<TAB>artist - title".  `mpc listall` prints
@@ -392,7 +417,10 @@ choose () {
 	local mode=song tag=
 	case "${(L)1-}" in
 		(all)
-			library | cut -d"$TAB" -f1
+			local -a everything
+			everything=( ${(f)"$(library | cut -d"$TAB" -f1)"} )
+			randomize everything
+			print -rl -- $everything
 			return 0 ;;
 		(expr)
 			mode=expr; shift ;;
@@ -420,9 +448,11 @@ choose () {
 				picked=( ${(f)"$(print -rl -- $values | pick "$tag>" "$q")"} )
 				for v in $picked; do
 					hits+=( ${(f)"$(mpc -f '%file%' find $tag "$v")"} )
-				done ;;
+				done
+				randomize hits ;;
 			(expr)
-				hits=( ${(f)"$(mpc -f '%file%' find "$q" 2>/dev/null)"} ) ;;
+				hits=( ${(f)"$(mpc -f '%file%' find "$q" 2>/dev/null)"} )
+				randomize hits ;;
 			(song)
 				hits=( ${(f)"$(library | pick "$prompt" "$q")"} ) ;;
 		esac
