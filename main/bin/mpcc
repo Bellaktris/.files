@@ -36,7 +36,7 @@
 #   next   [<group>] <query>     schedule to play next, ahead of the block
 #   next                         skip to the next song
 #   next - [<group>] [query]     browse in fzf, then schedule to play next
-#   push   [query]               schedule a song already in the queue
+#   push   [n|n-m|query]         schedule a song already in the queue
 #   add    [<group>] [query]     append to the far end, not scheduled
 #
 #   <group> is artist, album, albumartist, genre, mood, lang, composer,
@@ -47,7 +47,7 @@
 #
 #   play   [n|query]             resume, play position n, or pick from queue
 #   prev | toggle | pause | stop | shuffle | clear
-#   remove [query]               drop songs from the queue
+#   remove [n|n-m|query]         drop songs from the queue
 #   <anything else>              passed straight to mpc
 #
 # MPCC_SLICE sets how many queue lines the status view shows.  See _mpcc for
@@ -466,14 +466,37 @@ choose () {
 
 # The same, over the queue: prints the positions picked, deduplicated so a song
 # named twice is not acted on twice.
+#
+# A query that is a queue position - 12 - or a range of them - 199-206 - takes
+# those positions directly; anything else goes to the picker.  So a song whose
+# title is nothing but digits cannot be searched for by that title.
 pick_queue () {
 	local prompt="$1"; shift
 	local -a queries=( "$@" )
 	(( $#queries )) || queries=( '' )
-	local -a found
+
+	local -i len=$(queue_len)
+	local -a found hits
 	local q
+	local -i from to p t
 	for q in "${queries[@]}"; do
-		found+=( ${(f)"$(queue | pick "$prompt" "$q")"} )
+		if [[ $q == <->(-<->|) ]]; then
+			from=${q%%-*}
+			to=${q##*-}
+			(( from <= to )) || { t=$from; from=$to; to=$t }
+			for (( p = from; p <= to; p++ )); do
+				if (( p >= 1 && p <= len )); then
+					found+=( $p )
+				else
+					print -u2 -- "mpcc: no song at position $p"
+				fi
+			done
+		else
+			hits=( ${(f)"$(queue | pick "$prompt" "$q")"} )
+			(( $#hits )) || [[ -z $q ]] ||
+				print -u2 -- "mpcc: nothing in the queue matched \"$q\""
+			found+=( $hits )
+		fi
 	done
 	print -rl -- ${(u)found}
 }
