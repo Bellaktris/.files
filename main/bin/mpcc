@@ -183,7 +183,19 @@ set_block_order () {
 	for line in ${(f)"$(mpc -f "%id%${TAB}%position%" playlist)"}; do
 		at[${line%%$TAB*}]=${line#*$TAB}
 	done
+	# Clear the whole block first, then number it.  mpd discards a priority
+	# that is unchanged, and `shuffle` rebuilds its random order without
+	# consulting priorities at all - so restating the same numbers after a
+	# shuffle left the block unhonoured and `next` picked at random.  Going
+	# through zero forces the re-sort.  Zeroed in one call to keep the window
+	# in which the block does not exist as short as possible.
+	local -a positions
 	local id
+	for id in $ids; do
+		[[ -n ${at[$id]-} ]] && positions+=( ${at[$id]} )
+	done
+	(( $#positions )) && mpc prio 0 $positions >/dev/null
+
 	local -i i=0 prio
 	for id in $ids; do
 		(( i++ ))
