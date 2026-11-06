@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""mpcc-tag - apply tags.conf to the library's .ogg files.
+
+tags.conf is the source you edit; the tags in the files are what mpd indexes.
+This copies the former into the latter, and is safe to re-run: a file is only
+rewritten when its tags would actually change, so repeated runs cost nothing
+and do not churn through Dropbox.
+
+  mpcc-tag                 apply to every .ogg in the music directory
+  mpcc-tag FILE...         apply to these files only (yt2ogg uses this)
+  mpcc-tag -n              say what would change, write nothing
+  mpcc-tag -c CONF         read a different map
+
+For a managed field, tags.conf is authoritative: dropping a song's genre line
+removes the tag from the file.  A field never mentioned anywhere in the map is
+left alone entirely, as are artist, title and the loudness gain.
+"""
+
+import argparse
+import importlib.machinery
+import importlib.util
+import os
+import pathlib
+import re
+import sys
+
+# oggtag sits next to this script and has no .py suffix, so importlib cannot
+# infer a loader for it - name one.
+HERE = pathlib.Path(__file__).resolve().parent
+try:
+    _loader = importlib.machinery.SourceFileLoader("oggtag", str(HERE / "oggtag"))
+    _spec = importlib.util.spec_from_loader("oggtag", _loader)
+    oggtag = importlib.util.module_from_spec(_spec)
+    _loader.exec_module(oggtag)
+except (OSError, ImportError) as exc:
+    sys.exit(f"mpcc-tag: cannot load {HERE / 'oggtag'}: {exc}")
+
+# Friendly names for the mpd tags that have none, or an unobvious one.
+FIELD_TAGS = {"lang": "GROUPING", "genre": "GENRE", "mood": "MOOD"}
+
+DEFAULT_MUSIC_DIR = pathlib.Path.home() / "Dropbox" / "Music"
+
+
+def music_dir():
+    """Whatever mpd is configured to read, so there is one source of truth."""
+    conf = pathlib.Path(
+        os.environ.get("XDG_CONFIG_HOME", pathlib.Path.home() / ".config")
+    ) / "mpd" / "mpd.conf"
+    try:
+        for line in conf.read_text().splitlines():
+            m = re.match(r'\s*music_directory\s+"(.*)"', line)
+            if m:
+                return pathlib.Path(os.path.expanduser(m.group(1)))
+    except OSError:
+        pass
+    return DEFAULT_MUSIC_DIR
+
+
+def parse_conf(path):
+    """-> (artist defaults, song overrides, every field name mentioned)."""
+    artists, songs, seen = {}, {}, set()
+    section = None
+    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+        line = raw.rstrip()
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if line.strip().startswith("["):
+            section = line.strip().strip("[]").lower()
+            if section not in ("artist", "song"):
+                raise ValueError(f"{path}:{lineno}: unknown section [{section}]")
+            continue
+        if section is None:
+            raise ValueError(f"{path}:{lineno}: line outside any section")
+
+        key, *rest = line.split("\t")
+        key = key.strip()
+        if not key:
+            raise ValueError(f"{path}:{lineno}: empty key")
+        fields = {}
+        for item in rest:
+            item = item.strip()
+            if not item:
+                continue
+            name, sep, values = item.partition("=")
+            if not sep:
+                raise ValueError(f"{path}:{lineno}: {item!r} is not field=value")
+            name = name.strip().lower()
+            seen.add(name)
+            fields[name] = [v.strip() for v in values.split(",") if v.strip()]
+        (artists if section == "artist" else songs)[key] = fields
+    return artists, songs, seen
+
+
+def wanted(path, artists, songs, current):
+    """The managed tags this file should end up with."""
+    artist = next((v for k, v in current if k == "ARTIST"), "")
+    fields = dict(artists.get(artist, {}))
+    fields.update(songs.get(path.stem, {}))
+    return {FIELD_TAGS.get(n, n.upper()): v for n, v in fields.items()}
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("-n", "--dry-run", action="store_true")
+    ap.add_argument("-c", "--conf")
+    ap.add_argument("-h", "--help", action="store_true")
+    ap.add_argument("files", nargs="*", type=pathlib.Path)
+    args = ap.parse_args()
+    if args.help:
+        print(__doc__.rstrip())
+        return 0
+
+    mdir = music_dir()
+    conf = pathlib.Path(args.conf) if args.conf else mdir / "tags.conf"
+    try:
+        artists, songs, mentioned = parse_conf(conf)
+    except (OSError, ValueError) as exc:
+        print(f"mpcc-tag: {exc}", file=sys.stderr)
+        return 1
+
+    managed = {FIELD_TAGS.get(n, n.upper())
+               for n in set(mentioned) | set(FIELD_TAGS)}
+    files = args.files or sorted(mdir.glob("*.ogg"))
+    if not files:
+        print(f"mpcc-tag: no .ogg files under {mdir}", file=sys.stderr)
+        return 1
+
+    changed = skipped = failed = 0
+    for path in files:
+        try:
+            pages, end, payload = oggtag.load(str(path))
+            vendor, current = oggtag.parse_comments(payload)
+        except (OSError, ValueError) as exc:
+            print(f"mpcc-tag: {path.name}: {exc}", file=sys.stderr)
+            failed += 1
+            continue
+
+        target = wanted(path, artists, songs, current)
+        have = {k: [v for kk, v in current if kk == k]
+                for k in managed if any(kk == k for kk, _ in current)}
+        want = {k: v for k, v in target.items() if v}
+        if have == want:
+            skipped += 1
+            continue
+
+        kept = [(k, v) for k, v in current if k not in managed]
+        for tag, values in sorted(want.items()):
+            kept += [(tag, v) for v in values]
+
+        shown = " ".join(f"{k.lower()}=[{', '.join(v)}]" for k, v in sorted(want.items())) or "(cleared)"
+        print(f"  {path.name}\n      {shown}")
+        if args.dry_run:
+            changed += 1
+            continue
+        try:
+            oggtag.save(str(path), pages, end, vendor, kept)
+            changed += 1
+        except (OSError, ValueError) as exc:
+            print(f"mpcc-tag: {path.name}: {exc}", file=sys.stderr)
+            failed += 1
+
+    verb = "would change" if args.dry_run else "changed"
+    print(f"{verb} {changed}, already correct {skipped}, failed {failed}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

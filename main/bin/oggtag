@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""oggtag - read and write the comment block of an Ogg Opus file.
+
+Exists because ffmpeg collapses duplicate keys, so it cannot write the
+multi-valued tags Vorbis comments allow and mpd indexes:
+
+    GENRE=hard rock
+    GENRE=ballad
+
+Only the comment packet is rebuilt.  Audio pages are copied byte for byte and
+compared against the original before anything is replaced, so the stream is
+provably untouched - no decode, no re-encode, no reliance on a muxer.
+
+  oggtag FILE                      print one KEY=value line per comment
+  oggtag -s KEY=VAL ... FILE       replace every value of KEY (repeat for more)
+  oggtag -a KEY=VAL ... FILE       add a value, keeping existing ones
+  oggtag -d KEY ... FILE           drop every value of KEY
+  oggtag -n ...                    print what would be written, write nothing
+
+Keys are compared case-insensitively and stored uppercase, which is the Vorbis
+comment convention; values keep their case.
+"""
+
+import argparse
+import os
+import struct
+import sys
+
+# Ogg's CRC: polynomial 0x04c11db7, no reflection, no initial or final xor.
+_CRC_TABLE = []
+for _n in range(256):
+    _r = _n << 24
+    for _ in range(8):
+        _r = ((_r << 1) ^ 0x04C11DB7) & 0xFFFFFFFF if _r & 0x80000000 else (_r << 1) & 0xFFFFFFFF
+    _CRC_TABLE.append(_r)
+
+
+def _crc(data):
+    r = 0
+    for b in data:
+        r = ((r << 8) & 0xFFFFFFFF) ^ _CRC_TABLE[((r >> 24) & 0xFF) ^ b]
+    return r
+
+
+class Page:
+    __slots__ = ("header_type", "granule", "serial", "seq", "segments", "payload")
+
+    def __init__(self, header_type, granule, serial, seq, segments, payload):
+        self.header_type = header_type
+        self.granule = granule
+        self.serial = serial
+        self.seq = seq
+        self.segments = segments
+        self.payload = payload
+
+    @property
+    def continued(self):
+        return bool(self.header_type & 0x01)
+
+    @property
+    def ends_packet(self):
+        # A packet ends on this page unless its last segment is a full 255.
+        return not self.segments or self.segments[-1] != 255
+
+    def encode(self, seq=None):
+        if seq is None:
+            seq = self.seq
+        head = b"OggS" + bytes([0, self.header_type]) + struct.pack(
+            "<qII", self.granule, self.serial, seq
+        ) + b"\0\0\0\0" + bytes([len(self.segments)]) + bytes(self.segments)
+        raw = head + self.payload
+        return raw[:22] + struct.pack("<I", _crc(raw)) + raw[26:]
+
+
+def read_pages(blob):
+    pages, pos = [], 0
+    while pos < len(blob):
+        if blob[pos:pos + 4] != b"OggS":
+            raise ValueError(f"not an Ogg page at offset {pos}")
+        header_type = blob[pos + 5]
+        granule, serial, seq = struct.unpack_from("<qII", blob, pos + 6)
+        nsegs = blob[pos + 26]
+        segments = list(blob[pos + 27:pos + 27 + nsegs])
+        start = pos + 27 + nsegs
+        size = sum(segments)
+        pages.append(Page(header_type, granule, serial, seq, segments,
+                          blob[start:start + size]))
+        pos = start + size
+    return pages
+
+
+def parse_comments(payload):
+    """Split an OpusTags payload into (vendor, [(KEY, value), ...])."""
+    if payload[:8] != b"OpusTags":
+        raise ValueError("second packet is not OpusTags")
+    p = 8
+    (vlen,) = struct.unpack_from("<I", payload, p); p += 4
+    vendor = payload[p:p + vlen]; p += vlen
+    (count,) = struct.unpack_from("<I", payload, p); p += 4
+    out = []
+    for _ in range(count):
+        (clen,) = struct.unpack_from("<I", payload, p); p += 4
+        raw = payload[p:p + clen].decode("utf-8", "replace"); p += clen
+        key, _, value = raw.partition("=")
+        out.append((key.upper(), value))
+    return vendor, out
+
+
+def build_comments(vendor, comments):
+    out = bytearray(b"OpusTags")
+    out += struct.pack("<I", len(vendor)) + vendor
+    out += struct.pack("<I", len(comments))
+    for key, value in comments:
+        item = f"{key}={value}".encode("utf-8")
+        out += struct.pack("<I", len(item)) + item
+    return bytes(out)
+
+
+def repage(payload, header_type, granule, serial):
+    """Split a packet across as many pages as it needs."""
+    pages, offset, first = [], 0, True
+    while True:
+        chunk = payload[offset:offset + 255 * 255]
+        segments = [255] * (len(chunk) // 255) + [len(chunk) % 255]
+        # A packet whose length is a multiple of 255 needs a terminating 0.
+        if len(chunk) % 255 == 0 and len(chunk) and len(payload) - offset > len(chunk):
+            segments = [255] * (len(chunk) // 255)
+        pages.append(Page(header_type if first else header_type | 0x01,
+                          granule, serial, 0, segments, chunk))
+        offset += len(chunk)
+        first = False
+        if offset >= len(payload):
+            return pages
+
+
+def load(path):
+    pages = read_pages(open(path, "rb").read())
+    if not pages:
+        raise ValueError("empty file")
+    serials = {p.serial for p in pages}
+    if len(serials) != 1:
+        raise ValueError("chained or multiplexed Ogg is not supported")
+    if pages[0].payload[:8] != b"OpusHead":
+        raise ValueError("not an Ogg Opus file")
+
+    # The comment packet starts on page 1 and runs until a page ends it.
+    end = 1
+    while end < len(pages) and not pages[end].ends_packet:
+        end += 1
+    comment_payload = b"".join(p.payload for p in pages[1:end + 1])
+    return pages, end, comment_payload
+
+
+def save(path, pages, end, vendor, comments):
+    head = pages[0]
+    body = repage(build_comments(vendor, comments),
+                  pages[1].header_type & ~0x01, pages[1].granule, head.serial)
+    rest = pages[end + 1:]
+
+    blob = bytearray(head.encode(0))
+    seq = 1
+    for page in body + rest:
+        blob += page.encode(seq)
+        seq += 1
+
+    # Prove the audio survived: every page after the comment packet must come
+    # back byte-identical, bar its renumbered sequence field.
+    check = read_pages(bytes(blob))
+    if len(check) != 1 + len(body) + len(rest):
+        raise ValueError("page count mismatch after rebuild")
+    for before, after in zip(rest, check[1 + len(body):]):
+        if (before.payload != after.payload or before.segments != after.segments
+                or before.granule != after.granule
+                or before.header_type != after.header_type):
+            raise ValueError("audio page changed during rebuild")
+    if check[0].payload != head.payload:
+        raise ValueError("OpusHead changed during rebuild")
+    parse_comments(b"".join(p.payload for p in check[1:1 + len(body)]))
+
+    tmp = f"{path}.oggtag.tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(blob)
+    os.replace(tmp, path)
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("-s", "--set", action="append", default=[], metavar="KEY=VAL")
+    ap.add_argument("-a", "--add", action="append", default=[], metavar="KEY=VAL")
+    ap.add_argument("-d", "--delete", action="append", default=[], metavar="KEY")
+    ap.add_argument("-n", "--dry-run", action="store_true")
+    ap.add_argument("-h", "--help", action="store_true")
+    ap.add_argument("files", nargs="*")
+    args = ap.parse_args()
+
+    if args.help or not args.files:
+        print(__doc__.rstrip())
+        return 0 if args.help else 1
+
+    status = 0
+    for path in args.files:
+        try:
+            pages, end, payload = load(path)
+            vendor, comments = parse_comments(payload)
+        except (OSError, ValueError, struct.error) as exc:
+            print(f"oggtag: {path}: {exc}", file=sys.stderr)
+            status = 1
+            continue
+
+        if not (args.set or args.add or args.delete):
+            for key, value in comments:
+                print(f"{key}={value}")
+            continue
+
+        drop = {k.upper() for k in args.delete}
+        drop |= {s.partition("=")[0].upper() for s in args.set}
+        kept = [(k, v) for k, v in comments if k not in drop]
+        for spec in args.set + args.add:
+            key, _, value = spec.partition("=")
+            kept.append((key.upper(), value))
+
+        if args.dry_run:
+            print(f"{path}:")
+            for key, value in kept:
+                print(f"  {key}={value}")
+            continue
+        try:
+            save(path, pages, end, vendor, kept)
+        except (OSError, ValueError, struct.error) as exc:
+            print(f"oggtag: {path}: {exc}", file=sys.stderr)
+            status = 1
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

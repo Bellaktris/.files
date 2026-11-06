@@ -191,6 +191,13 @@ while IFS= read -r f; do
     printf 'WARN  %s  [%s] — not opus, audio was re-encoded\n' "$(basename "$f")" "$codec"
     status=1
   fi
+  # Fill in genre, mood and language from tags.conf, if it has anything to say
+  # about this artist or song. Failure is not fatal: the download is fine, the
+  # tags can be applied later with `mpcc-tag`.
+  if command -v mpcc-tag >/dev/null 2>&1; then
+    mpcc-tag "$f" | sed -n '/^ /s/^ */      /p' || true
+  fi
+
   # Match the rest of the library, which is executable. Has to come after the
   # mv above, or it would be undone by the temp file's umask-derived mode.
   chmod 755 "$f"
