@@ -7,7 +7,8 @@
 # silently transcode.
 #
 # Artist and title are guessed from the video title, then confirmed one track at
-# a time; an edited value lands in both the tags and the filename.
+# a time; an edited value lands in both the tags and the filename. Each track
+# also gets an R128_TRACK_GAIN so players can level it against the rest.
 #
 # Usage: ./yt2ogg [-y] <url> [url...]
 #        -y                              take the guesses, don't prompt
@@ -19,7 +20,7 @@ set -euo pipefail
 OUTDIR="${HOME}/Dropbox/Music"
 BROWSER="${BROWSER:-chrome}"
 
-usage() { sed -n '2,15p' "$0" | cut -c3-; }
+usage() { sed -n '2,16p' "$0" | cut -c3-; }
 
 assume_yes=0
 while [ $# -gt 0 ]; do
@@ -53,6 +54,38 @@ ask() {
   reply="${reply#"${reply%%[![:space:]]*}"}"
   reply="${reply%"${reply##*[![:space:]]}"}"
   printf '%s' "${reply:-$default}"
+}
+
+# The Opus loudness tag, in the fixed-point form the spec actually asks for.
+#
+# R128_TRACK_GAIN must be an integer of dB x 256 (Q7.8). YouTube's streams
+# instead carry a ReplayGain-style string ("-4.9 dB"), which mpd and friends
+# cannot parse, and --map_metadata -1 below drops it anyway. So: reuse the
+# source's number when there is one, otherwise measure the track; either way
+# emit it in the form a player can read.
+#
+# Absent a source gain, the target is -23 LUFS, the EBU R128 reference the rest
+# of the library is already normalised to.
+r128_gain() {
+  local f="$1" raw db
+  raw="$(ffprobe -v error -select_streams a:0 \
+    -show_entries stream_tags=R128_TRACK_GAIN -of default=nw=1:nk=1 "$f")"
+  raw="${raw%$'\r'}"
+
+  if [[ $raw =~ ^-?[0-9]+$ ]]; then
+    printf '%s' "$raw"              # already conformant, keep it verbatim
+    return 0
+  elif [[ $raw =~ ^(-?[0-9]+(\.[0-9]+)?)[[:space:]]*[dD][bB]$ ]]; then
+    db="${BASH_REMATCH[1]}"
+  else
+    # ebur128 prints its summary even with framelog=quiet.
+    db="$(ffmpeg -nostats -hide_banner -i "$f" \
+            -af ebur128=framelog=quiet -f null - 2>&1 |
+          awk '$1 == "I:" { lufs = $2 } END { if (lufs != "") print -23 - lufs }')"
+  fi
+
+  [ -n "$db" ] || return 1
+  awk -v d="$db" 'BEGIN { printf "%d", (d < 0 ? -int(-d * 256 + 0.5) : int(d * 256 + 0.5)) }'
 }
 
 for bin in yt-dlp ffmpeg ffprobe; do
@@ -122,10 +155,19 @@ while IFS= read -r f; do
     # put back just these two. -c copy leaves the Opus bitstream byte-identical,
     # so this is a container rewrite, not a transcode; +bitexact suppresses the
     # encoder tag ffmpeg would otherwise add on the way out.
+    # Read the gain before the rewrite, which is what discards it. It goes on
+    # as stream metadata: ffmpeg overrides a format-level R128_TRACK_GAIN.
+    gainopt=()
+    if gain="$(r128_gain "$f")" && [ -n "$gain" ]; then
+      gainopt=(-metadata:s:a:0 "R128_TRACK_GAIN=$gain")
+    else
+      printf 'WARN  %s  — no loudness gain could be determined\n' "$(basename "$f")"
+      status=1
+    fi
     tmp="$(dirname "$f")/.yt2ogg.$$.ogg"
     if ffmpeg -v error -y -i "$f" -map 0:a -c copy -map_metadata -1 \
          -fflags +bitexact -metadata artist="$artist" -metadata title="$title" \
-         "$tmp" && mv -f "$tmp" "$f"; then
+         "${gainopt[@]}" "$tmp" && mv -f "$tmp" "$f"; then
       # Keep the name in step with the tags after an edit. A slash would read as
       # a path separator, so swap in the lookalike yt-dlp itself substitutes.
       base="${tags//\//⧸}.${f##*.}"
