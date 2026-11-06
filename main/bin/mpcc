@@ -194,6 +194,34 @@ set_block_order () {
 	return 0
 }
 
+# Put the block back where it belongs: directly after the current song, in
+# play order.  mpc shuffle randomises every position including the block's,
+# which costs nothing under random mode (priority decides) but loses the
+# schedule entirely in sequential play.
+repack_block () {
+	local -a ids=( ${(f)"$(block_ids)"} )
+	(( $#ids )) || return 0
+
+	local -i cur=$(current_pos)
+	local -i target=$(( cur + 1 )) pos
+	local id line
+	local -A at
+	for id in $ids; do
+		# Positions shift with every move, so look each song up again.
+		at=()
+		for line in ${(f)"$(mpc -f "%id%${TAB}%position%" playlist)"}; do
+			at[${line%%$TAB*}]=${line#*$TAB}
+		done
+		pos=${at[$id]-0}
+		(( pos )) || continue
+		# Lifting a song out from before the target shifts the target left.
+		(( pos < target )) && (( target-- ))
+		(( pos == target )) || mpc move $pos $target >/dev/null
+		(( target++ ))
+	done
+	set_block_order $ids
+}
+
 # Move the queue entry at $1 to position $2.  Best effort: it is what orders
 # the block in sequential play, while priority orders it under random.
 schedule_at () {
@@ -546,7 +574,7 @@ case $cmd in
 	(prev)           mpc prev >/dev/null; now ;;
 	(toggle|pause)   mpc $cmd >/dev/null; now ;;
 	(stop)           mpc stop >/dev/null; now ;;
-	(shuffle)        mpc shuffle >/dev/null; show ;;
+	(shuffle)        mpc shuffle >/dev/null; repack_block; show ;;
 	(clear)          mpc clear >/dev/null; print -- "queue cleared" ;;
 
 	(help|-h|--help)
