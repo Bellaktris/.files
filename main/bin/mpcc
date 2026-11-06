@@ -50,14 +50,18 @@
 #   remove [n|n-m|query]         drop songs from the queue
 #   <anything else>              passed straight to mpc
 #
-# MPCC_SLICE sets how many queue lines the status view shows.  See _mpcc for
-# the completions.
+# MPCC_SLICE sets how many queue lines the status view shows, MPCC_BLOCK_SLICE
+# how many scheduled songs it will list beyond them (half of MPCC_SLICE).
+# `sched` always prints the whole block.  See _mpcc for the completions.
 
 emulate -L zsh
 setopt extended_glob pipe_fail
 
 local -r GREEN=$'\e[32m' RED=$'\e[31m' CYAN=$'\e[36m' DIM=$'\e[2m' RESET=$'\e[0m'
 local -ri SLICE=${MPCC_SLICE:-20}
+# How much of the up-next block the status view will print when the block runs
+# past the queue window; the rest is summarised as a count.
+local -ri BLOCK_SLICE=${MPCC_BLOCK_SLICE:-$(( (SLICE + 1) / 2 ))}
 local -r TAB=$'\t'
 # mpd takes priorities 0-255, 0 meaning "not scheduled".  Counting down from
 # the top keeps priority order and position order pointing the same way.
@@ -346,6 +350,35 @@ show () {
 	(( to > total )) && { to=total; from=$(( to - rows + 1 )) }
 	(( from < 1 )) && { from=1; to=$(( from + rows - 1 )) }
 
+	# The block is ordered by priority, not position: under random mode the
+	# cursor wanders off while the block stays where it was queued, usually
+	# outside the window below.  Print whatever part of it the window missed, so
+	# what comes next is never off-screen - but a block can be hundreds of songs
+	# long, so keep the $BLOCK_SLICE soonest and count the rest.
+	local -a block out
+	block=( ${(f)"$(mpc --with-prio -f "%prio%${TAB}%position%${TAB}%artist% — %title%" playlist)"} )
+	local -i cap=BLOCK_SLICE
+	(( cap < 1 )) && cap=1
+	local b bpos
+	local -i skipped=0
+	for b in ${(On)block}; do
+		bpos=${${b#*$TAB}%%$TAB*}
+		(( bpos >= from && bpos <= to )) && continue
+		if (( $#out < cap )); then
+			out+=( "${(l:3:)bpos} ${CYAN}»${RESET} ${b##*$TAB}" )
+		else
+			(( skipped++ ))
+		fi
+	done
+	# Soonest last, matching the queue window below, so the whole column runs
+	# one way and the next song sits right against the top of the window.
+	if (( $#out )); then
+		(( skipped )) && print -- "${DIM}    +${skipped} more scheduled${RESET}"
+		local line
+		for line in ${(Oa)out}; do clip "$line"; done
+		print
+	fi
+
 	local -i i
 	local pos prio label gutter
 	for (( i = to; i >= from; i-- )); do
@@ -358,21 +391,6 @@ show () {
 		else
 			clip "${(l:3:)pos} ${gutter} ${label}"
 		fi
-	done
-
-	# The block is ordered by priority, not position: under random mode the
-	# cursor wanders off and the block stays where it was queued, usually far
-	# outside the window above.  Show whatever part of it the window missed, in
-	# play order, so what comes next is never off-screen.
-	local -a block
-	block=( ${(f)"$(mpc --with-prio -f "%prio%${TAB}%position%${TAB}%artist% — %title%" playlist)"} )
-	local b bpos
-	local -i shown=0
-	for b in ${(On)block}; do
-		bpos=${${b#*$TAB}%%$TAB*}
-		(( bpos >= from && bpos <= to )) && continue
-		(( shown++ == 0 )) && print
-		clip "${(l:3:)bpos} ${CYAN}»${RESET} ${b##*$TAB}"
 	done
 
 	# Separate the queue from the status block below it.
