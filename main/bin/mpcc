@@ -21,18 +21,25 @@
 #   mpcc then                browse and multi-select in fzf
 #   mpcc then zaz            hand "zaz" to fzf as its initial filter, so a
 #                            single match is taken without prompting
+#   mpcc then a b c          one query per argument, scheduled in that order
 #
 # Commands
 #
 #   (none) | status | list [n]   status, the up-next block and the queue
 #   sched                        just the up-next block
 #
-#   then   [artist|all] [query]  schedule after everything already scheduled
-#   next   [artist|all] <query>  schedule to play next, ahead of the block
+#   then   [<group>] [query]     schedule after everything already scheduled
+#   next   [<group>] <query>     schedule to play next, ahead of the block
 #   next                         skip to the next song
-#   next - [artist|all] [query]  browse in fzf, then schedule to play next
+#   next - [<group>] [query]     browse in fzf, then schedule to play next
 #   push   [query]               schedule a song already in the queue
-#   add    [artist|all] [query]  append to the far end, not scheduled
+#   add    [<group>] [query]     append to the far end, not scheduled
+#
+#   <group> is artist, album, albumartist, genre, mood, lang, composer,
+#   performer, label, comment or date, to take everything carrying a value of
+#   that tag; "all" for the whole library; or "expr" with an mpd filter
+#   expression such as "(grouping != 'en')".  genre, mood and lang come from
+#   tags.conf in the music directory - see mpcc-tag.
 #
 #   play   [n|query]             resume, play position n, or pick from queue
 #   prev | toggle | pause | stop | shuffle | clear
@@ -68,15 +75,31 @@ width () {
 	print -- $(( w > 20 ? w : 80 ))
 }
 
+# Clip lines to the terminal width.  Only printable columns count: the SGR
+# escapes in a line are bytes, and slicing one in half would drop its reset and
+# leave the colour bleeding into the prompt.  Width, not length, so a
+# double-width character cannot overshoot the edge either.
 clip () {
 	local -i w=$(width)
-	local line
+	local line plain out rest
+	local -i used budget
 	for line in "$@"; do
-		if (( ${(m)#line} > w )); then
-			print -r -- "${line[1,w-3]} .."
-		else
+		plain="${line//$'\e'\[[^m]##m/}"
+		if (( ${(m)#plain} <= w )); then
 			print -r -- "$line"
+			continue
 		fi
+		out=; rest="$line"; used=0; budget=$(( w - 3 ))
+		while [[ -n $rest ]]; do
+			if [[ $rest == (#b)($'\e'\[[^m]##m)* ]]; then
+				out+="$match[1]"; rest="${rest#$match[1]}"
+				continue
+			fi
+			(( used + ${(m)#rest[1]} > budget )) && break
+			out+="$rest[1]"; (( used += ${(m)#rest[1]} ))
+			rest="${rest[2,-1]}"
+		done
+		print -r -- "${out}${RESET} .."
 	done
 }
 
@@ -136,19 +159,43 @@ sched_end () {
 	print -- $last
 }
 
-# Renumber the block so priority order matches position order again.
-reprioritise () {
-	local -a pos
-	pos=( ${(f)"$(sched_positions)"} )
-	local -i i prio
-	for (( i = 1; i <= $#pos; i++ )); do
-		prio=$(( PRIO_TOP - i ))
-		(( prio < 1 )) && prio=1
-		mpc prio $prio $pos[i] >/dev/null
-	done
+# The block as song ids, highest priority first - which is its play order.
+#
+# Ids, not positions: a move renumbers every position after it, and the queue
+# can hold the same song twice, so neither position nor uri identifies a block
+# member across an edit.
+block_ids () {
+	local -a rows
+	rows=( ${(f)"$(mpc --with-prio -f "%prio%${TAB}%id%" playlist)"} )
+	(( $#rows )) || return 0
+	print -rl -- ${${(On)rows}#*$TAB}
 }
 
-# Move the queue entry at $1 to position $2 and mark it scheduled.
+# Give the block the play order of $@ (song ids), by renumbering priorities
+# from the top down.  Position is deliberately not consulted: under random mode
+# the cursor wanders off and a block queued over several commands ends up
+# scattered through the queue, where only priority says what plays next.
+set_block_order () {
+	local -a ids=( "$@" )
+	(( $#ids )) || return 0
+	local -A at
+	local line
+	for line in ${(f)"$(mpc -f "%id%${TAB}%position%" playlist)"}; do
+		at[${line%%$TAB*}]=${line#*$TAB}
+	done
+	local id
+	local -i i=0 prio
+	for id in $ids; do
+		(( i++ ))
+		prio=$(( PRIO_TOP - i ))
+		(( prio < 1 )) && prio=1
+		[[ -n ${at[$id]-} ]] && mpc prio $prio ${at[$id]} >/dev/null
+	done
+	return 0
+}
+
+# Move the queue entry at $1 to position $2.  Best effort: it is what orders
+# the block in sequential play, while priority orders it under random.
 schedule_at () {
 	local -i from="$1" to="$2"
 	(( to < 1 )) && to=1
@@ -176,15 +223,28 @@ status_tail () {
 	return 0
 }
 
+# One line: what is playing, then the transport state.  mpc pads its status
+# line into columns, which only makes sense when it is on its own.
 now () {
+	local -a st
+	st=( ${(f)"$(mpc status 2>/dev/null)"} )
+	local line transport= err=
+	for line in $st; do
+		case $line in
+			(\[*)     transport="${line//  ##/ }" ;;
+			(ERROR:*) err="$line" ;;
+		esac
+	done
+
 	local song
 	song=$(mpc -f "%artist% — %title%" current 2>/dev/null)
 	if [[ -n $song ]]; then
-		clip "${GREEN}${song}${RESET}"
+		clip "${GREEN}${song}${RESET}${transport:+  $transport}"
 	else
-		print -- "${DIM}stopped${RESET}"
+		clip "${DIM}stopped${RESET}${transport:+  $transport}"
 	fi
-	status_tail transport error
+	[[ -n $err ]] && print -- "${RED}${err}${RESET}"
+	return 0
 }
 
 # Status with the queue around the current song.  Upcoming songs are printed
@@ -235,6 +295,21 @@ show () {
 		fi
 	done
 
+	# The block is ordered by priority, not position: under random mode the
+	# cursor wanders off and the block stays where it was queued, usually far
+	# outside the window above.  Show whatever part of it the window missed, in
+	# play order, so what comes next is never off-screen.
+	local -a block
+	block=( ${(f)"$(mpc --with-prio -f "%prio%${TAB}%position%${TAB}%artist% — %title%" playlist)"} )
+	local b bpos
+	local -i shown=0
+	for b in ${(On)block}; do
+		bpos=${${b#*$TAB}%%$TAB*}
+		(( bpos >= from && bpos <= to )) && continue
+		(( shown++ == 0 )) && print
+		clip "${(l:3:)bpos} ${CYAN}»${RESET} ${b##*$TAB}"
+	done
+
 	# Separate the queue from the status block below it.
 	print
 	status_tail transport options error
@@ -252,34 +327,85 @@ sched () {
 
 # --- choosing songs ---
 
-# "artist <query>" picks from the artist list and takes everything they have,
-# "all" takes the whole library, anything else picks songs.  Prints URIs.
+# Pick songs and print their URIs.
+#
+# A leading group name switches from picking songs to picking values of that
+# tag and taking everything carrying them:
+#
+#   then artist Zaz          every Zaz song
+#   then genre heavy metal   every song in that genre
+#   then lang ru             language lives in mpd's "grouping" (see tags.conf)
+#   then all                 the whole library, no prompting
+#   then expr "(grouping != 'en')"
+#                            any mpd filter expression, which is the only way
+#                            to say "not this" - == and != and contains and AND
+#
+# Each remaining argument is a separate query, resolved in the order given, so
+# several songs (or artists, or genres) can be named in one command.  A title
+# containing spaces therefore has to arrive as one word, which is what the
+# completion produces and what quoting does by hand.
+#
+# A song whose title happens to be a group name has to be picked from the
+# picker rather than named, since the group name wins.
 choose () {
 	local prompt="$1"; shift
-	local mode=song
-	case "${1-}" in
-		(artist) mode=artist; shift ;;
-		(all)    mode=all;    shift ;;
-	esac
-	local query="$*"
-
-	case $mode in
+	local mode=song tag=
+	case "${(L)1-}" in
 		(all)
 			library | cut -d"$TAB" -f1
-			;;
-		(artist)
-			local -a artists picked
-			artists=( ${(f)"$(mpc list artist | awk -v t="$TAB" '{ print $0 t $0 }')"} )
-			picked=( ${(f)"$(print -rl -- $artists | pick "artist>" "$query")"} )
-			local a
-			for a in $picked; do
-				mpc -f '%file%' find artist "$a"
-			done
-			;;
-		(song)
-			library | pick "$prompt" "$query"
-			;;
+			return 0 ;;
+		(expr)
+			mode=expr; shift ;;
+		(lang|language)
+			mode=tag; tag=grouping; shift ;;
+		(artist|album|albumartist|genre|mood|grouping|composer|performer|label|comment|date)
+			mode=tag; tag="${(L)1}"; shift ;;
 	esac
+
+	# No query at all still means one pass, with the picker unfiltered.
+	local -a queries=( "$@" )
+	(( $#queries )) || queries=( '' )
+
+	local -a values picked hits
+	[[ $mode == tag ]] &&
+		values=( ${(f)"$(mpc list $tag | awk -v t="$TAB" '{ print $0 t $0 }')"} )
+
+	# A query that matches nothing is reported rather than dropped: with
+	# several of them the count alone would not say which one missed.
+	local q v
+	for q in "${queries[@]}"; do
+		hits=()
+		case $mode in
+			(tag)
+				picked=( ${(f)"$(print -rl -- $values | pick "$tag>" "$q")"} )
+				for v in $picked; do
+					hits+=( ${(f)"$(mpc -f '%file%' find $tag "$v")"} )
+				done ;;
+			(expr)
+				hits=( ${(f)"$(mpc -f '%file%' find "$q" 2>/dev/null)"} ) ;;
+			(song)
+				hits=( ${(f)"$(library | pick "$prompt" "$q")"} ) ;;
+		esac
+		if (( $#hits )); then
+			print -rl -- $hits
+		else
+			print -u2 -- "mpcc: nothing matched ${${q:+\"$q\"}:-the picker}"
+		fi
+	done
+}
+
+# The same, over the queue: prints the positions picked, deduplicated so a song
+# named twice is not acted on twice.
+pick_queue () {
+	local prompt="$1"; shift
+	local -a queries=( "$@" )
+	(( $#queries )) || queries=( '' )
+	local -a found
+	local q
+	for q in "${queries[@]}"; do
+		found+=( ${(f)"$(queue | pick "$prompt" "$q")"} )
+	done
+	print -rl -- ${(u)found}
 }
 
 # --- commands ---
@@ -309,15 +435,24 @@ put () {
 
 	# Append, then move into place: mpc insert can only land right after the
 	# current song, which is not where the back of the block is.
-	local uri
+	local -a oldids=( ${(f)"$(block_ids)"} )
+	local -a newids
+	local uri id
 	local -i len
 	for uri in $uris; do
 		len=$(queue_len)
 		print -r -- "$uri" | mpc add >/dev/null
+		id=$(mpc -f '%id%' playlist | tail -1)
+		newids+=( $id )
 		schedule_at $(( len + 1 )) $target
 		(( target++ ))
 	done
-	reprioritise
+	# "next" goes ahead of the block, "then" behind it.
+	if [[ $where == front ]]; then
+		set_block_order $newids $oldids
+	else
+		set_block_order $oldids $newids
+	fi
 
 	print -- "scheduled $#uris song(s) ${where:s/front/to play next/:s/back/after the block/}"
 	show
@@ -326,7 +461,7 @@ put () {
 # Schedule songs that are already in the queue.
 push () {
 	local -a picked
-	picked=( ${(f)"$(queue | pick "push>" "$*")"} )
+	picked=( ${(f)"$(pick_queue "push>" "$@")"} )
 	(( $#picked )) || return 0
 
 	# Positions shift with every move, so remember the songs by uri.
@@ -337,6 +472,8 @@ push () {
 	done
 
 	local -i target=$(( $(sched_end) + 1 )) pos cur
+	local -a oldids=( ${(f)"$(block_ids)"} )
+	local -a newids
 	local uri
 	for uri in $uris; do
 		cur=$(current_pos)
@@ -345,17 +482,18 @@ push () {
 		# Removing a song from before the current one shifts everything after
 		# it left by one, and mpd applies <to> to the queue after the removal.
 		(( pos < target )) && (( target-- ))
+		newids+=( $(mpc -f "%id%${TAB}%position%" playlist | awk -F"$TAB" -v p="$pos" '$2 == p { print $1 }') )
 		schedule_at $pos $target
 		(( target++ ))
 	done
-	reprioritise
+	set_block_order $oldids $newids
 	print -- "scheduled $#uris song(s) already in the queue"
 	show
 }
 
 remove () {
 	local -a picked
-	picked=( ${(f)"$(queue | pick "remove>" "$*")"} )
+	picked=( ${(f)"$(pick_queue "remove>" "$@")"} )
 	(( $#picked )) || return 0
 	# Delete from the back so earlier positions stay valid.
 	local p
