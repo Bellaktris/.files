@@ -60,7 +60,7 @@ points zsh at `zsh/runcoms/`, and `~/.vimrc` (also from `main`) loads
 | `mpcc-tag` | apply `tags.conf` to the library's Ogg tags  | python3                   |
 | `oggtag`   | read and write multi-valued Ogg comments     | python3                   |
 | `yt2ogg`   | YouTube audio to `.ogg` without re-encoding  | yt-dlp, ffmpeg            |
-| `vpnchain` | chained WireGuard-over-SOCKS proxy for a browser (macOS) | sing-box; tor, i2pd optional |
+| `vpnchain` | chained WireGuard-over-SOCKS proxy for a browser (macOS, Linux; run `vpnchain setup` once on Linux) | sing-box, Chrome, Mullvad Browser; tor, i2pd optional |
 
 Their dependencies are not installed by `install`. Each documents itself in
 the comment block at its top.
