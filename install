@@ -6,7 +6,8 @@
 #   3. create the directories stow must not fold into a single link
 #   4. move aside any real file that sits where a link has to go
 #   5. stow the packages into $HOME
-#   6. copy the fonts into ~/Library/Fonts on macOS
+#   6. copy the seed files into place, and the fonts into ~/Library/Fonts
+#      on macOS
 #   7. run zsh/runcoms/.zlogin and vim/configs.py
 #
 # Safe to re-run: present tools are not reinstalled, links stow already owns
@@ -73,12 +74,57 @@ TOOLS=(
   "rg:ripgrep:ripgrep:ripgrep:ripgrep"
   "ctags:universal-ctags:universal-ctags:ctags:ctags"
   # nvim-treesitter compiles parsers with it, and wants a newer one than the
-  # Linux distributions ship; elsewhere it is left to cargo.
+  # Linux distributions ship - fetched from its releases below instead.
   "tree-sitter:tree-sitter-cli::::"
 )
 
+# Present means usable: macOS ships a BSD ctags at /usr/bin/ctags that the git
+# hooks cannot use, and a distribution's neovim may predate what vim/ needs.
+present() {
+  case $1 in
+    ctags) ctags --version 2>/dev/null | grep -q 'Universal Ctags' ;;
+    nvim)  command -v nvim >/dev/null && [ "$(nvim_minor)" -ge 12 ] ;;
+    *)     command -v "$1" >/dev/null ;;
+  esac
+}
+nvim_minor() {
+  nvim --version 2>/dev/null | sed -n '1s/^NVIM v0\.\([0-9]*\).*/\1/p' | grep . || echo 0
+}
+
+# The official release, unpacked into ~/.local, for distributions whose
+# neovim is too old - Ubuntu 24.04 ships 0.9.
+install_nvim_release() {
+  local arch
+  case $(uname -m) in
+    x86_64) arch=x86_64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) echo "install: no neovim release for $(uname -m)" >&2; return 1 ;;
+  esac
+  say "Installing neovim from its latest release into ~/.local/opt/nvim"
+  run mkdir -p "$HOME/.local/opt" "$HOME/.local/bin"
+  run sh -c "curl -fsSL 'https://github.com/neovim/neovim/releases/latest/download/nvim-linux-$arch.tar.gz' \
+    | tar -xz -C '$HOME/.local/opt' && rm -rf '$HOME/.local/opt/nvim' \
+    && mv '$HOME/.local/opt/nvim-linux-$arch' '$HOME/.local/opt/nvim'"
+  run ln -sf "$HOME/.local/opt/nvim/bin/nvim" "$HOME/.local/bin/nvim"
+}
+
+install_tree_sitter_release() {
+  local arch
+  case $(uname -m) in
+    x86_64) arch=x64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) return 0 ;;
+  esac
+  say "Installing the tree-sitter CLI from its latest release into ~/.local/bin"
+  run mkdir -p "$HOME/.local/bin"
+  run sh -c "curl -fsSL 'https://github.com/tree-sitter/tree-sitter/releases/latest/download/tree-sitter-linux-$arch.gz' \
+    | gunzip > '$HOME/.local/bin/tree-sitter' && chmod +x '$HOME/.local/bin/tree-sitter'"
+}
+
 if [ $tools = 1 ]; then
-  if command -v brew >/dev/null; then
+  # Homebrew only on macOS: on Linux the system's packages are the ones the
+  # rest of this assumes, Linuxbrew or not.
+  if [ "$(uname)" = Darwin ] && command -v brew >/dev/null; then
     field=2; install_cmd=(brew install)
   elif command -v apt-get >/dev/null; then
     field=3; install_cmd=(sudo apt-get install -y)
@@ -93,7 +139,11 @@ if [ $tools = 1 ]; then
   missing=()
   for entry in "${TOOLS[@]}"; do
     cmd=${entry%%:*}
-    command -v "$cmd" >/dev/null && continue
+    present "$cmd" && continue
+    # Distribution packages of these are too old; fetched further down.
+    if [ $field -gt 2 ] && { [ "$cmd" = nvim ] || [ "$cmd" = tree-sitter ]; }; then
+      continue
+    fi
     if [ $field = 0 ]; then
       missing+=("$cmd")
     else
@@ -114,6 +164,15 @@ if [ $tools = 1 ]; then
     5) missing+=(base-devel) ;;
   esac
 
+  # Linux desktops also want neovim's python3 provider (YouCompleteMe and
+  # UltiSnips need it, and pip will not install into the system python) and
+  # a clipboard tool for Wayland and X11 alike.
+  case $field in
+    3) missing+=(python3-pynvim wl-clipboard xclip) ;;
+    4) missing+=(python3-neovim wl-clipboard xclip) ;;
+    5) missing+=(python-pynvim wl-clipboard xclip) ;;
+  esac
+
   if [ ${#missing[@]} -gt 0 ]; then
     if [ $field = 0 ]; then
       echo "install: no known package manager; install these yourself:" \
@@ -123,6 +182,11 @@ if [ $tools = 1 ]; then
     say "Installing ${missing[*]}"
     [ $field = 3 ] && run sudo apt-get update
     run "${install_cmd[@]}" "${missing[@]}"
+  fi
+
+  if [ $field -gt 2 ]; then
+    present nvim || install_nvim_release || true
+    present tree-sitter || install_tree_sitter_release || true
   fi
 fi
 
@@ -147,6 +211,16 @@ run mkdir -p "$HOME/.config" "$HOME/.config/nvim" "$HOME/.local/bin" \
 # pick up fonts that are symlinks.
 STOW=(stow -d "$DOTFILES" -t "$HOME" --ignore='\.DS_Store' --ignore='__pycache__'
       --ignore='^Library$')
+
+# Seed files: config that its program rewrites as you use it - htop saves the
+# sort column on every quit. Linked, every such write would land in the repo.
+# So the repo copy is only a starting point: copied into place when there is
+# none, never linked, and the live file is the program's own from then on.
+# Copy it back by hand to keep a deliberate change.
+SEEDS=(main/.config/htop/htoprc)
+for seed in "${SEEDS[@]}"; do
+  STOW+=(--ignore="^$(basename "$seed")\$")
+done
 
 # A real file where stow needs a link makes it refuse the whole run.  Ask it
 # what would conflict, and move each one into the backup directory.
@@ -180,6 +254,18 @@ else
   "${STOW[@]}" -R "${packages[@]}"
 fi
 
+# --- seed files -------------------------------------------------------------
+
+for seed in "${SEEDS[@]}"; do
+  pkg=${seed%%/*}
+  case " ${packages[*]} " in *" $pkg "*) ;; *) continue ;; esac
+  dest="$HOME/${seed#*/}"
+  [ -e "$dest" ] && continue
+  say "Seeding ~/${seed#*/}"
+  run mkdir -p "$(dirname "$dest")"
+  run cp "$DOTFILES/$seed" "$dest"
+done
+
 # --- fonts on macOS ---------------------------------------------------------
 
 if [ "$(uname)" = Darwin ]; then
@@ -195,6 +281,13 @@ if [ "$(uname)" = Darwin ]; then
       run cp "$font" "$dest"
     done
   done
+fi
+
+# Linux finds new fonts under ~/.fonts only once its cache is rebuilt.
+if [ "$(uname)" != Darwin ] && command -v fc-cache >/dev/null; then
+  case " ${packages[*]} " in
+    *" fonts "*) say "Rebuilding the font cache"; run fc-cache -f ;;
+  esac
 fi
 
 # --- zsh and vim ------------------------------------------------------------

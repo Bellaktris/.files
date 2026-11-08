@@ -1,12 +1,14 @@
 #!/bin/sh
+# Rewrites .git/tags from the tracked files. Plain sh: on Debian and Ubuntu
+# /bin/sh is dash, which has no [[.
 set -e
 
-command -v foo >/dev/null 2>&1 || ctags_not_found=1
+# Universal Ctags only: macOS ships a BSD ctags at /usr/bin/ctags that knows
+# none of the options below.
+ctags --version 2>/dev/null | grep -q 'Universal Ctags' || exit 0
 
-if [[ ${ctags_not_found} == 1 ]]; then
-  dir="$(git rev-parse --git-dir)"
-  trap 'rm -f "$dir/$$.tags"' EXIT
-  git ls-files | \
-    ctags --tag-relative -L - -f"$dir/$$.tags" --languages=-javascript,sql
-  mv "$dir/$$.tags" "$dir/tags"
-fi
+dir="$(git rev-parse --git-dir)"
+trap 'rm -f "$dir/$$.tags"' EXIT
+git ls-files | \
+  ctags --tag-relative -L - -f"$dir/$$.tags" --languages=-javascript,sql
+mv "$dir/$$.tags" "$dir/tags"

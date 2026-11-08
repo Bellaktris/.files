@@ -1,2 +1,8 @@
+# Not found by flake8 on its own - user-level config went in flake8 4.0 - so
+# vim's neomake passes it with --append-config. extend-ignore rather than
+# ignore: ignore would replace flake8's default list instead of adding to it.
+#   E111, E114  two-space indentation
+#   E221, E231, E271  alignment spacing around operators, commas, keywords
+#   E501  line length, as pylint's C0301
 [flake8]
-ignore = E111
+extend-ignore = E111,E114,E221,E231,E271,E501

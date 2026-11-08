@@ -44,8 +44,14 @@ python3 ~/.files/vim/configs.py           # write ~/.vimrc, ~/.config/nvim/init.
   it rewrites `~/.vimrc` with absolute paths baked in.
 
 Every top-level directory other than `zsh/` and `vim/` is a stow package
-mirroring `$HOME` (`main/`, `git/`, `fonts/`, `python/`, `gdb/`, `c++/`,
-`fbterm/`). `main/.zshenv -> ../zsh/runcoms/.zshenv` is the one in-repo
+mirroring `$HOME` (`main/`, `git/`, `fonts/`, `gdb/`, `c++/`, `fbterm/`).
+Files a program rewrites as it runs (`SEEDS` in `install`, today only
+`main/.config/htop/htoprc`) are never linked: `install` copies them into place
+when missing and the live copy is local. `python/` is not stowed either -
+`.zprofile` exports `PYTHONSTARTUP`, `PYLINTRC` and `MATPLOTLIBRC` pointing
+into it, neomake passes flake8 `--append-config`, and a `.zshrc` alias gives
+standalone `ptpython` the same config and history
+(`~/.local/state/ptpython/history`). `main/.zshenv -> ../zsh/runcoms/.zshenv` is the one in-repo
 symlink. Because `main/.vimrc` is stowed to `~/.vimrc`, `configs.py` skips
 writing `~/.vimrc` / `init.vim` when they are symlinks - otherwise it would
 write through into the repo.

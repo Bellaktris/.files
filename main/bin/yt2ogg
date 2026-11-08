@@ -12,15 +12,22 @@
 #
 # Usage: ./yt2ogg [-y] <url> [url...]
 #        -y                              take the guesses, don't prompt
-#        BROWSER=safari ./yt2ogg <url>   # cookie source (default: chrome)
-#        OUTDIR=~/Music  ./yt2ogg <url>  # destination  (default: cwd)
+#        BROWSER=safari ./yt2ogg <url>   # cookie source (default: chrome,
+#                                        #   firefox on Linux)
+#        OUTDIR=~/Music  ./yt2ogg <url>  # destination  (default: ~/Dropbox/Music)
 
 set -euo pipefail
 
-OUTDIR="${HOME}/Dropbox/Music"
-BROWSER="${BROWSER:-chrome}"
+OUTDIR="${OUTDIR:-${HOME}/Dropbox/Music}"
+# Ubuntu's default browser is Firefox, and Chrome's cookies there need the
+# GNOME keyring plus secretstorage to decrypt.
+if [ "$(uname)" = Darwin ]; then
+  BROWSER="${BROWSER:-chrome}"
+else
+  BROWSER="${BROWSER:-firefox}"
+fi
 
-usage() { sed -n '2,16p' "$0" | cut -c3-; }
+usage() { sed -n '2,17p' "$0" | cut -c3-; }
 
 assume_yes=0
 while [ $# -gt 0 ]; do

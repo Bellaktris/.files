@@ -1,9 +1,7 @@
 [MESSAGES CONTROL]
 # Pointless whinging
-#   R0201 = Method could be a function (now: no-self-use)
 #   W0212 = Accessing protected attribute of client class
 #   W0613 = Unused argument
-#   W0232 = Class has no __init__ method
 #   R0903 = Too few public methods
 #   C0301 = Line too long
 #   R0913 = Too many arguments
@@ -19,7 +17,7 @@
 #   W0614 = Unused import from wildcard
 
 # Disable the message(s) with the mentioned id's.
-disable=R0201,W0212,W0613,W0232,R0903,W0614,W0611,C0114,C0115,C0116,C0301,R0913,C0103,W0402,R0914
+disable=W0212,W0613,R0903,W0614,W0611,C0114,C0115,C0116,C0301,R0913,C0103,W0402,R0914
 
 
 [TYPECHECK]
@@ -32,10 +30,10 @@ ignored-modules = numpy,vapoursynth
 # text, parseable, colorized, msvs (visual studio) and html
 output-format=text
 
-# Put messages  in a  separate file  for each  module/package specified  on the
-# command line  instead of printing  them on stdout.  Reports (if any)  will be
-# written in a file name "pylint_global.[txt|html]".
-files-output=no
-
 # Tells whether to display a full report or only the messages
 reports=no
+
+
+[FORMAT]
+# Two-space indentation throughout, as in the rest of these dotfiles.
+indent-string='  '

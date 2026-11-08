@@ -17,17 +17,23 @@ doing it. It:
 
 1. fetches the submodules;
 2. installs whatever is missing of stow, git, zsh, tmux, neovim, python3,
-   cmake, curl, fzf, ripgrep, universal-ctags, the tree-sitter CLI (brew
-   only) and a C++ toolchain, through
-   brew, apt, dnf or pacman (`--no-tools` skips this);
+   cmake, curl, fzf, ripgrep, Universal Ctags, the tree-sitter CLI and a C++
+   toolchain - through Homebrew on macOS, apt, dnf or pacman on Linux, plus
+   pynvim and wl-clipboard/xclip there. Where the distribution's neovim is
+   older than 0.12 (Ubuntu ships 0.9), and for tree-sitter, the official
+   release goes into `~/.local` instead. `--no-tools` skips this step;
 3. creates `~/.config`, `~/.config/nvim` and `~/.local/bin`, so stow links
    into them rather than replacing them with a link into this repo;
 4. moves any real file that is in the way of a link to
    `~/.dotfiles-backup/<date>/`;
 5. stows the packages into `$HOME` - `main`, `git` and `fonts` unless others
    are named (`./install main git fonts python`);
-6. copies `fonts/Library/Fonts` into `~/Library/Fonts` on macOS, which does
-   not reliably load fonts that are symlinks;
+6. copies the seed files into place when they are missing - config a
+   program rewrites as you use it, today just `htoprc`, which would
+   otherwise land every sort-column change in the repo; copies
+   `fonts/Library/Fonts` into `~/Library/Fonts` on macOS, which does not
+   reliably load fonts that are symlinks; and rebuilds the font cache on
+   Linux;
 7. runs `zsh/runcoms/.zlogin`, which compiles the zsh tree, builds
    `tmux-mem-cpu-load` and installs fzf, and `vim/configs.py`, which installs
    the vim plugins.
@@ -43,7 +49,7 @@ Each top-level directory is a stow package that mirrors `$HOME`:
 | `main`   | `.zshenv`, `.vimrc`, tmux, `.inputrc`, `.dir_colors`, `~/bin`, `.config/{htop,mpv,nvim,cppman}`, `.local/bin` |
 | `git`    | `.gitconfig`, global ignore, commit message template, a template whose hooks keep ctags current |
 | `fonts`  | `.fonts`, fontconfig; `Library/Fonts` is copied on macOS, not linked |
-| `python` | `.pythonrc`, `.pylintrc`, ptpython, flake8, pycodestyle, matplotlib |
+| `python` | not stowed: `.zprofile` points `PYTHONSTARTUP`, `PYLINTRC` and `MATPLOTLIBRC` at it, and vim passes flake8 its config |
 | `gdb`    | `.gdbinit` and the dashboard, imshow, qt5printers and backtrace plugins |
 | `c++`    | a quick-start template and `prettyprinters.hpp` in `~/.local/include` |
 | `fbterm` | framebuffer terminal config, for Linux consoles                 |

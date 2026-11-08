@@ -56,9 +56,19 @@ DEFAULT_MUSIC_DIR = pathlib.Path.home() / "Dropbox" / "Music"
 
 def music_dir():
     """Whatever mpd is configured to read, so there is one source of truth."""
-    conf = pathlib.Path(
-        os.environ.get("XDG_CONFIG_HOME", pathlib.Path.home() / ".config")
-    ) / "mpd" / "mpd.conf"
+    # Per-user first, then the system-wide one Debian and Ubuntu install.
+    for conf in (pathlib.Path(os.environ.get("XDG_CONFIG_HOME",
+                                             pathlib.Path.home() / ".config"))
+                 / "mpd" / "mpd.conf",
+                 pathlib.Path.home() / ".mpdconf",
+                 pathlib.Path("/etc/mpd.conf")):
+        found = _music_dir_from(conf)
+        if found:
+            return found
+    return DEFAULT_MUSIC_DIR
+
+
+def _music_dir_from(conf):
     try:
         for line in conf.read_text().splitlines():
             m = re.match(r'\s*music_directory\s+"(.*)"', line)
@@ -66,7 +76,7 @@ def music_dir():
                 return pathlib.Path(os.path.expanduser(m.group(1)))
     except OSError:
         pass
-    return DEFAULT_MUSIC_DIR
+    return None
 
 
 def parse_conf(path):

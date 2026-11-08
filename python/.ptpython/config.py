@@ -4,6 +4,7 @@
 
 import os, subprocess, shutil
 
+from prompt_toolkit.application import run_in_terminal
 from prompt_toolkit.keys import Keys
 import prompt_toolkit.key_binding.key_processor as kp
 
@@ -84,7 +85,6 @@ def configure(repl):
 
   # Enable 24bit True color.
   repl.color_depth = "DEPTH_24_BIT"
-  repl.true_color = True
 
   # Use this colorschemes for the code and UI.
   repl.use_code_colorscheme('monokai')
@@ -98,49 +98,31 @@ def configure(repl):
   def _(event):
     event.app.key_processor.feed(kp.KeyPress('^'))
 
+  # Ctrl-R searches the history through fzf. The entries come from ptpython's
+  # own history object rather than its file, so this works wherever the file
+  # lives; NUL-separated, so a multi-line entry stays one entry. No --scheme:
+  # it needs fzf 0.36, and Ubuntu 22.04 ships 0.29.
   if shutil.which('fzf'):
-    history_file = os.path.expanduser('~/.files/python/.ptpython/history')
-
-    def _parse_ptpython_history(path):
-      entries = []
-      current = []
-      for line in open(path):
-        if line.startswith('#'):
-          if current:
-            entries.append('\n'.join(current))
-            current = []
-        elif line.startswith('+'):
-          current.append(line[1:].rstrip('\n'))
-      if current:
-        entries.append('\n'.join(current))
-      return entries
-
     @repl.add_key_binding(Keys.ControlR, filter=ViInsertMode() | ViNavigationMode())
-    def _(event):
-      if not os.path.exists(history_file):
-        return
-
-      entries = _parse_ptpython_history(history_file)
+    async def _(event):
+      # Newest first, each entry once.
+      entries = list(dict.fromkeys(reversed(repl.history.get_strings())))
       if not entries:
         return
 
-      # Use null separator so multi-line entries survive fzf
-      fzf_input = '\n'.join(
-        e.replace('\n', '  ⏎  ') for e in entries
-      )
+      def pick():
+        try:
+          return subprocess.run(
+            ['fzf', '--read0', '--print0', '--no-sort', '--exact',
+             '--no-multi', '--prompt=history> '],
+            input='\0'.join(entries), stdout=subprocess.PIPE, text=True)
+        except (OSError, subprocess.SubprocessError):
+          return None
 
-      try:
-        result = subprocess.run(
-          ['fzf', '--tac', '--no-sort', '--exact', '--no-multi',
-           '--scheme=history', '--prompt=history> '],
-          input=fzf_input,
-          capture_output=True, text=True
-        )
-      except (OSError, subprocess.SubprocessError):
-        return
-
-      if result.returncode == 0 and result.stdout.rstrip('\n'):
-        selected = result.stdout.rstrip('\n').replace('  ⏎  ', '\n')
+      # Suspends the prompt while fzf owns the terminal, and redraws after.
+      result = await run_in_terminal(pick)
+      selected = result.stdout.rstrip('\0') if result else ''
+      if result and result.returncode == 0 and selected:
         buf = event.app.current_buffer
         buf.text = selected
         buf.cursor_position = len(buf.text)

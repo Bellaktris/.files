@@ -1,6 +1,5 @@
-backend                     : TkAgg
 interactive                 : True
-text.usetex                 : True
+text.usetex                 : False
 mathtext.fontset            : cm
 axes.formatter.use_mathtext : True
 lines.linewidth             : 0.8
@@ -40,7 +39,8 @@ grid.color                  : 000000
 grid.linestyle              : dashed
 grid.linewidth              : 0.05
 axes.grid                   : True
-figure.dpi                  : 300
+figure.dpi                  : 100
+savefig.dpi                 : 300
 savefig.transparent         : True
 savefig.jpeg_quality        : 95
 figure.autolayout           : True
