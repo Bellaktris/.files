@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# install - set up these dotfiles on a new machine, or bring one up to date.
+#
+#   1. fetch the submodules (vim, zsh and everything nested in them)
+#   2. install the tools the configs expect, where they are missing
+#   3. create the directories stow must not fold into a single link
+#   4. move aside any real file that sits where a link has to go
+#   5. stow the packages into $HOME
+#   6. copy the fonts into ~/Library/Fonts on macOS
+#   7. run zsh/runcoms/.zlogin and vim/configs.py
+#
+# Safe to re-run: present tools are not reinstalled, links stow already owns
+# are left as they are, and nothing is moved unless it is in the way.
+#
+# Usage: ./install [-n] [--no-tools] [package...]
+#        -n          say what would happen, change nothing
+#        --no-tools  skip the package manager step
+#        package     directories to stow (default: main git fonts)
+#
+# The other packages (python, gdb, c++, fbterm) are not stowed by default;
+# name them to add them, e.g. "./install main git fonts python".
+
+set -euo pipefail
+
+DOTFILES=$(cd "$(dirname "$0")" && pwd -P)
+BACKUP="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
+
+usage() { sed -n '2,22p' "$0" | cut -c3-; }
+
+dry_run=0
+tools=1
+packages=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|--dry-run) dry_run=1 ;;
+    --no-tools) tools=0 ;;
+    -h|--help) usage; exit 0 ;;
+    -*) echo "install: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *) packages+=("$1") ;;
+  esac
+  shift
+done
+[ ${#packages[@]} -gt 0 ] || packages=(main git fonts)
+
+for pkg in "${packages[@]}"; do
+  [ -d "$DOTFILES/$pkg" ] || { echo "install: no package $pkg" >&2; exit 2; }
+done
+
+say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+run() {
+  if [ $dry_run = 1 ]; then printf '    %s\n' "$*"; else "$@"; fi
+}
+
+# --- submodules -------------------------------------------------------------
+
+say "Fetching submodules"
+run git -C "$DOTFILES" submodule update --init --recursive
+
+# --- tools ------------------------------------------------------------------
+
+# Each entry is "command:brew:apt:dnf:pacman"; an empty field means the
+# manager has no package for it (or the system already ships it).
+TOOLS=(
+  "stow:stow:stow:stow:stow"
+  "git:git:git:git:git"
+  "zsh:zsh:zsh:zsh:zsh"
+  "tmux:tmux:tmux:tmux:tmux"
+  "nvim:neovim:neovim:neovim:neovim"
+  "python3:python:python3:python3:python"
+  "cmake:cmake:cmake:cmake:cmake"
+  "curl:curl:curl:curl:curl"
+  "fzf:fzf:fzf:fzf:fzf"
+  "rg:ripgrep:ripgrep:ripgrep:ripgrep"
+  "ctags:universal-ctags:universal-ctags:ctags:ctags"
+  # nvim-treesitter compiles parsers with it, and wants a newer one than the
+  # Linux distributions ship; elsewhere it is left to cargo.
+  "tree-sitter:tree-sitter-cli::::"
+)
+
+if [ $tools = 1 ]; then
+  if command -v brew >/dev/null; then
+    field=2; install_cmd=(brew install)
+  elif command -v apt-get >/dev/null; then
+    field=3; install_cmd=(sudo apt-get install -y)
+  elif command -v dnf >/dev/null; then
+    field=4; install_cmd=(sudo dnf install -y)
+  elif command -v pacman >/dev/null; then
+    field=5; install_cmd=(sudo pacman -S --needed --noconfirm)
+  else
+    field=0
+  fi
+
+  missing=()
+  for entry in "${TOOLS[@]}"; do
+    cmd=${entry%%:*}
+    command -v "$cmd" >/dev/null && continue
+    if [ $field = 0 ]; then
+      missing+=("$cmd")
+    else
+      pkg=$(printf '%s' "$entry" | cut -d: -f$field)
+      [ -n "$pkg" ] && missing+=("$pkg")
+    fi
+  done
+
+  # YouCompleteMe and tmux-mem-cpu-load are compiled, so a C++ toolchain and
+  # (on Linux) the Python headers have to be there too.
+  case $field in
+    2) xcode-select -p >/dev/null 2>&1 || {
+         say "Installing the Xcode command line tools"
+         run xcode-select --install || true
+       } ;;
+    3) missing+=(build-essential python3-dev) ;;
+    4) missing+=(gcc-c++ make python3-devel) ;;
+    5) missing+=(base-devel) ;;
+  esac
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    if [ $field = 0 ]; then
+      echo "install: no known package manager; install these yourself:" \
+        "${missing[*]}" >&2
+      exit 1
+    fi
+    say "Installing ${missing[*]}"
+    [ $field = 3 ] && run sudo apt-get update
+    run "${install_cmd[@]}" "${missing[@]}"
+  fi
+fi
+
+command -v stow >/dev/null || {
+  echo "install: stow is required (drop --no-tools, or install it)" >&2
+  exit 1
+}
+
+# --- directories ------------------------------------------------------------
+
+# stow links a whole directory when the target does not exist yet.  These are
+# shared with other programs, so they have to be real directories that hold
+# the links rather than links into this repo - otherwise whatever else lands
+# in ~/.config or ~/.local/bin would be written into the dotfiles.
+say "Creating directories"
+run mkdir -p "$HOME/.config" "$HOME/.config/nvim" "$HOME/.local/bin" \
+  "$HOME/.tempd/undodir"
+
+# --- stow -------------------------------------------------------------------
+
+# fonts/Library is copied below rather than linked: macOS does not reliably
+# pick up fonts that are symlinks.
+STOW=(stow -d "$DOTFILES" -t "$HOME" --ignore='\.DS_Store' --ignore='__pycache__'
+      --ignore='^Library$')
+
+# A real file where stow needs a link makes it refuse the whole run.  Ask it
+# what would conflict, and move each one into the backup directory.
+conflicts=$("${STOW[@]}" -n -R "${packages[@]}" 2>&1 |
+  sed -n -e 's/.* over existing target \(.*\) since .*/\1/p' \
+         -e 's/.*existing target is [^:]*: \(.*\)$/\1/p' | sort -u) || true
+
+if [ -n "$conflicts" ]; then
+  say "Moving conflicting files to $BACKUP"
+  while IFS= read -r target; do
+    run mkdir -p "$BACKUP/$(dirname "$target")"
+    run mv "$HOME/$target" "$BACKUP/$target"
+  done <<< "$conflicts"
+fi
+
+say "Stowing ${packages[*]}"
+if [ $dry_run = 1 ]; then
+  # A restow unlinks everything and links it again; keep only real changes.
+  # The conflicts were "moved" above, so stow's own complaint is dropped.
+  "${STOW[@]}" -n -v -R "${packages[@]}" 2>&1 | awk '
+    / \(reverts previous action\)$/ { split($0, f, " "); kept[f[2]] = 1; next }
+    /^(LINK|UNLINK|MKDIR|RMDIR): / { line[++n] = $0 }
+    END {
+      for (i = 1; i <= n; i++) {
+        split(line[i], f, " ")
+        if (!(f[1] == "UNLINK:" && kept[f[2]])) { print "    " line[i]; shown++ }
+      }
+      if (!shown) print "    (no link changes)"
+    }' || true
+else
+  "${STOW[@]}" -R "${packages[@]}"
+fi
+
+# --- fonts on macOS ---------------------------------------------------------
+
+if [ "$(uname)" = Darwin ]; then
+  for pkg in "${packages[@]}"; do
+    src="$DOTFILES/$pkg/Library/Fonts"
+    [ -d "$src" ] || continue
+    for font in "$src"/*; do
+      [ -f "$font" ] || continue
+      dest="$HOME/Library/Fonts/$(basename "$font")"
+      cmp -s "$font" "$dest" && continue
+      say "Copying $(basename "$font") to ~/Library/Fonts"
+      run mkdir -p "$HOME/Library/Fonts"
+      run cp "$font" "$dest"
+    done
+  done
+fi
+
+# --- zsh and vim ------------------------------------------------------------
+
+# .zlogin compiles the zsh tree, builds tmux-mem-cpu-load and installs fzf,
+# all in a disowned background job.
+say "Running zsh/runcoms/.zlogin"
+run zsh -c "source '$DOTFILES/zsh/runcoms/.zlogin'"
+
+# configs.py leaves ~/.vimrc and init.vim alone when they are links, so with
+# main stowed it only creates its directories and installs the plugins.
+say "Running vim/configs.py"
+run python3 "$DOTFILES/vim/configs.py"
+
+case ${SHELL:-} in
+  */zsh) ;;
+  *) say "Your login shell is ${SHELL:-unknown}; switch with: chsh -s $(command -v zsh || echo /bin/zsh)" ;;
+esac

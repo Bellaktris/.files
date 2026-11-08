@@ -25,7 +25,12 @@ Edits inside the auto-fu fork are a 3-level dance: commit in
 
 ## Install / re-run
 
-From `readme.md`:
+`./install` (bash, idempotent, `-n` for a dry run) fetches submodules, installs
+missing tools via brew/apt/dnf/pacman (`--no-tools` skips), pre-creates
+`~/.config`, `~/.config/nvim`, `~/.local/bin` so stow does not fold them, moves
+conflicting real files to `~/.dotfiles-backup/<date>/`, runs
+`stow -R` for the named packages (default `main git fonts`), copies
+`fonts/Library/Fonts` into `~/Library/Fonts` on macOS (not linked), then runs:
 
 ```
 source ~/.files/zsh/runcoms/.zlogin       # zcompile + build helpers + install fzf
@@ -38,10 +43,12 @@ python3 ~/.files/vim/configs.py           # write ~/.vimrc, ~/.config/nvim/init.
 - Re-run `vim/configs.py` after editing `vim/vimrc/main.vim` or moving the repo;
   it rewrites `~/.vimrc` with absolute paths baked in.
 
-There is no symlink/stow automation in the repo for the non-zsh, non-vim dotfiles
-under `main/`, `git/`, `python/`, `gdb/`, `c++/`, `fbterm/`, `fonts/` — they are
-expected to be symlinked into `$HOME` externally. The one in-repo symlink is
-`main/.zshenv -> ../zsh/runcoms/.zshenv`.
+Every top-level directory other than `zsh/` and `vim/` is a stow package
+mirroring `$HOME` (`main/`, `git/`, `fonts/`, `python/`, `gdb/`, `c++/`,
+`fbterm/`). `main/.zshenv -> ../zsh/runcoms/.zshenv` is the one in-repo
+symlink. Because `main/.vimrc` is stowed to `~/.vimrc`, `configs.py` skips
+writing `~/.vimrc` / `init.vim` when they are symlinks - otherwise it would
+write through into the repo.
 
 ## Architecture
 
@@ -100,7 +107,7 @@ maps server names to executables (`s:ycm_server_map`) and registers them via
 line in *both* bootstraps and, if it's not already in `s:ycm_server_map`, add
 the executable mapping there.
 
-Static linters (flake8, pylint, cpplint) run via neomake on `BufWritePost`
+Static linters (flake8, pylint, cpplint) run via neomake on `BufEnter` and `BufWritePost` (nvim only)
 through `vim/vimrc/plugin-options/neomake.vim`. The makers invoke standalone
 binaries from PATH (`exe: 'flake8'`, etc.), not `python3 -m flake8` — brew-style
 isolated CLI installs work; the linter module doesn't need to be importable
