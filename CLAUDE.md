@@ -45,9 +45,11 @@ python3 ~/.files/vim/configs.py           # write ~/.vimrc, ~/.config/nvim/init.
 
 Every top-level directory other than `zsh/` and `vim/` is a stow package
 mirroring `$HOME` (`main/`, `git/`, `fonts/`, `gdb/`, `c++/`, `fbterm/`).
-Files a program rewrites as it runs (`SEEDS` in `install`, today only
-`main/.config/htop/htoprc`) are never linked: `install` copies them into place
-when missing and the live copy is local. `python/` is not stowed either -
+Files a program rewrites as it runs (`SEEDS` in `install`: today
+`main/.config/htop/htoprc` and Claude Code's `main/.claude/settings.json`) are
+never linked: `install` copies them into place when missing and the live copy
+is local. `install` pre-creates `~/.claude` so stow never folds it into a link
+to the repo, which would put Claude's session data in the dotfiles. `python/` is not stowed either -
 `.zprofile` exports `PYTHONSTARTUP`, `PYLINTRC` and `MATPLOTLIBRC` pointing
 into it, neomake passes flake8 `--append-config`, and a `.zshrc` alias gives
 standalone `ptpython` the same config and history

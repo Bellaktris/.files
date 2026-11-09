@@ -203,7 +203,7 @@ command -v stow >/dev/null || {
 # in ~/.config or ~/.local/bin would be written into the dotfiles.
 say "Creating directories"
 run mkdir -p "$HOME/.config" "$HOME/.config/nvim" "$HOME/.local/bin" \
-  "$HOME/.tempd/undodir"
+  "$HOME/.tempd/undodir" "$HOME/.claude"
 
 # --- stow -------------------------------------------------------------------
 
@@ -213,13 +213,17 @@ STOW=(stow -d "$DOTFILES" -t "$HOME" --ignore='\.DS_Store' --ignore='__pycache__
       --ignore='^Library$')
 
 # Seed files: config that its program rewrites as you use it - htop saves the
-# sort column on every quit. Linked, every such write would land in the repo.
+# sort column on every quit, Claude Code saves every /config change. Linked,
+# every such write would land in the repo.
 # So the repo copy is only a starting point: copied into place when there is
 # none, never linked, and the live file is the program's own from then on.
 # Copy it back by hand to keep a deliberate change.
-SEEDS=(main/.config/htop/htoprc)
+SEEDS=(main/.config/htop/htoprc main/.claude/settings.json)
+# stow matches --ignore against the path within the package, not the bare
+# name, so a ^name$ pattern never matches below the top level: each seed is
+# ignored by its own path, dots escaped.
 for seed in "${SEEDS[@]}"; do
-  STOW+=(--ignore="^$(basename "$seed")\$")
+  STOW+=(--ignore="(^|/)$(printf '%s' "${seed#*/}" | sed 's/[.]/\\./g')")
 done
 
 # A real file where stow needs a link makes it refuse the whole run.  Ask it
