@@ -18,8 +18,9 @@
 #        --no-tools  skip the package manager step
 #        package     directories to stow (default: main git fonts)
 #
-# The other packages (python, gdb, c++, fbterm) are not stowed by default;
-# name them to add them, e.g. "./install main git fonts python".
+# The other packages (python, gdb, c++, fbterm, vpnchain) are not stowed by
+# default; name them to add them, e.g. "./install main git fonts vpnchain".
+# vpnchain is its own repository (Bellaktris/vpnchain), here as a submodule.
 
 set -euo pipefail
 
@@ -203,7 +204,7 @@ command -v stow >/dev/null || {
 # in ~/.config or ~/.local/bin would be written into the dotfiles.
 say "Creating directories"
 run mkdir -p "$HOME/.config" "$HOME/.config/nvim" "$HOME/.local/bin" \
-  "$HOME/.tempd/undodir" "$HOME/.claude"
+  "$HOME/.local/libexec" "$HOME/.local/share" "$HOME/.tempd/undodir" "$HOME/.claude"
 
 # --- stow -------------------------------------------------------------------
 

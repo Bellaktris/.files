@@ -18,3 +18,6 @@
 [submodule "zsh"]
 	path = zsh
 	url = https://github.com/Bellaktris/prezto
+[submodule "vpnchain"]
+	path = vpnchain
+	url = https://github.com/Bellaktris/vpnchain.git

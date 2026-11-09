@@ -6,13 +6,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Personal dotfiles, forked from `Bellaktris/.files`. There is no build system, test
 suite, or linter for the repo itself — work here is editing config files and
-syncing submodules. Two submodules carry most of the substance:
+syncing submodules. Three submodules carry most of the substance:
 
 - `vim/` — fork of `Bellaktris/vim` (custom vimrc + plugin list).
 - `zsh/` — fork of `Bellaktris/prezto` (custom prezto modules). Itself contains
   a nested submodule `modules/completion/external-modules/autocompletion` →
   `Bellaktris/auto-fu` (another fork, the source of the `afu-vicmd` keymap
   referenced in `.zshrc`).
+- `vpnchain/` — `Bellaktris/vpnchain`, the chained proxy (sing-box, a node,
+  then WireGuard to your own exit). Its own repo, and a stow package that
+  mirrors `$HOME` (`bin/vpnchain`, `.local/libexec/vpnchain/`,
+  `.local/share/vpnchain/`); its `.stow-local-ignore` keeps `README.md` and
+  `server/` (the Reality node's setup) out of `$HOME`. Opt-in:
+  `./install main git fonts vpnchain`. Its zsh completion stays in the zsh
+  fork (`modules/completion/completions/_vpnchain`). Commit and push there,
+  then bump the pointer here, as for the others.
 
 Plus several gdb plugin submodules under `gdb/.gdb/`.
 
@@ -27,7 +35,8 @@ Edits inside the auto-fu fork are a 3-level dance: commit in
 
 `./install` (bash, idempotent, `-n` for a dry run) fetches submodules, installs
 missing tools via brew/apt/dnf/pacman (`--no-tools` skips), pre-creates
-`~/.config`, `~/.config/nvim`, `~/.local/bin` so stow does not fold them, moves
+`~/.config`, `~/.config/nvim`, `~/.local/bin`, `~/.local/libexec`,
+`~/.local/share` so stow does not fold them, moves
 conflicting real files to `~/.dotfiles-backup/<date>/`, runs
 `stow -R` for the named packages (default `main git fonts`), copies
 `fonts/Library/Fonts` into `~/Library/Fonts` on macOS (not linked), then runs:
@@ -44,7 +53,8 @@ python3 ~/.files/vim/configs.py           # write ~/.vimrc, ~/.config/nvim/init.
   it rewrites `~/.vimrc` with absolute paths baked in.
 
 Every top-level directory other than `zsh/` and `vim/` is a stow package
-mirroring `$HOME` (`main/`, `git/`, `fonts/`, `gdb/`, `c++/`, `fbterm/`).
+mirroring `$HOME` (`main/`, `git/`, `fonts/`, `gdb/`, `c++/`, `fbterm/`, and
+the `vpnchain/` submodule).
 Files a program rewrites as it runs (`SEEDS` in `install`: today
 `main/.config/htop/htoprc` and Claude Code's `main/.claude/settings.json`) are
 never linked: `install` copies them into place when missing and the live copy
