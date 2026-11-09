@@ -155,6 +155,12 @@ and `bin/mpcc` (an mpd client in zsh over `mpc` + fzf; its completion is
 `zsh/modules/completion/completions/_mpcc`, and it keeps an up-next block out
 of mpd song priorities).
 
+`.local/bin/claude-statusline` is Claude Code's status line (the seeded
+`settings.json` points `statusLine` at it): model, context, cost and plan
+usage via `jq`, right-aligned by padding to `$COLUMNS`. Claude trims leading
+whitespace, so the padding starts with an escape; `margin` is the width
+Claude reserves, found by trial (less and it truncates with an ellipsis).
+
 ## Conventions
 
 - No emojis in config files or commit messages.

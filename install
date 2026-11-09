@@ -73,6 +73,9 @@ TOOLS=(
   "curl:curl:curl:curl:curl"
   "fzf:fzf:fzf:fzf:fzf"
   "rg:ripgrep:ripgrep:ripgrep:ripgrep"
+  # Claude Code's status line (main/.local/bin/claude-statusline) parses
+  # its JSON with it; macOS ships one.
+  "jq:jq:jq:jq:jq"
   "ctags:universal-ctags:universal-ctags:ctags:ctags"
   # nvim-treesitter compiles parsers with it, and wants a newer one than the
   # Linux distributions ship - fetched from its releases below instead.

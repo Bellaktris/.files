@@ -1,0 +1,59 @@
+#!/usr/bin/env zsh
+
+# Claude Code status line (settings.json "statusLine"): model, context window,
+# session cost and plan usage, right-aligned.  Claude pipes the session as JSON
+# on stdin and sets COLUMNS to the terminal width.
+
+# Claude indents the line two columns and cuts it, with an ellipsis, two short
+# of the right edge (even with "padding": 0), so the last two stay blank.
+margin=4
+
+# One record, split on the unit separator (a tab is IFS whitespace, so empty
+# fields would collapse); a field is empty when Claude has not sent it yet
+# (rate_limits arrives only after the first response, and only on a plan).
+IFS=$'\x1f' read -r model ctx cost h5 h5_reset wk wk_reset < <(jq -r '[
+  .model.display_name // "",
+  (.context_window.used_percentage // "" | tostring),
+  (.cost.total_cost_usd // "" | tostring),
+  (.rate_limits.five_hour.used_percentage // "" | tostring),
+  (.rate_limits.five_hour.resets_at // "" | tostring),
+  (.rate_limits.seven_day.used_percentage // "" | tostring),
+  (.rate_limits.seven_day.resets_at // "" | tostring)
+] | join("\u001f")')
+
+zmodload -F zsh/datetime b:strftime
+
+# Each part is kept plain (to measure) and colored (to print).
+plain=() colored=()
+part() { plain+=$1; colored+=${2:-$1} }
+
+# The tmux status line's colors (zsh/modules/tmux/tmux-status.sh): bright cyan
+# values between black dots.
+value=$'\e[1;36m' sep=$'\e[0;30m · \e[1;36m'
+
+# Yellow from half, red from 80%.
+pct() {
+  local c=36
+  (( $1 >= 80 )) && c=31 || { (( $1 >= 50 )) && c=33 }
+  print -rn -- $'\e[1;'$c'm'$1%$value
+}
+
+[[ -n $model ]] && part $model
+[[ -n $ctx ]] && part "ctx $ctx%" "ctx $(pct $ctx)"
+[[ -n $cost ]] && part "\$$(printf %.2f $cost)"
+if [[ -n $h5 ]]; then
+  t=$(strftime %H:%M $h5_reset)
+  part "5h $h5% ($t)" "5h $(pct $h5) ($t)"
+fi
+if [[ -n $wk ]]; then
+  t=$(strftime %a $wk_reset)
+  part "wk $wk% ($t)" "wk $(pct $wk) ($t)"
+fi
+
+# Measured with an ASCII stand-in for the dot, which zsh would count in bytes
+# without a UTF-8 locale.
+line=${(pj:   :)plain}
+pad=$(( ${COLUMNS:-80} - margin - ${#line} ))
+(( pad > 0 )) || pad=0
+# Claude trims leading whitespace; an escape first keeps the padding.
+print -rn -- $'\e[0m'"${(l:pad:: :)}$value${(pj:$sep:)colored}"$'\e[0m'

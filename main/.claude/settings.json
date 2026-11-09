@@ -2,5 +2,10 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "editorMode": "vim",
   "skipDangerousModePermissionPrompt": true,
-  "theme": "dark"
+  "theme": "dark",
+  "statusLine": {
+    "type": "command",
+    "command": "~/.local/bin/claude-statusline",
+    "padding": 0
+  }
 }
