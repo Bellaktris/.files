@@ -63,8 +63,10 @@ to the repo, which would put Claude's session data in the dotfiles. `python/` is
 `.zprofile` exports `PYTHONSTARTUP`, `PYLINTRC` and `MATPLOTLIBRC` pointing
 into it, neomake passes flake8 `--append-config`, and a `.zshrc` alias gives
 standalone `ptpython` the same config and history
-(`~/.local/state/ptpython/history`). `main/.zshenv -> ../zsh/runcoms/.zshenv` is the one in-repo
-symlink. Because `main/.vimrc` is stowed to `~/.vimrc`, `configs.py` skips
+(`~/.local/state/ptpython/history`). Two in-repo symlinks: `main/.zshenv -> ../zsh/runcoms/.zshenv`,
+and `fonts/.fonts/Monaco/monaco-utf8.ttf -> ../../Library/Fonts/monaco-utf8.ttf`,
+so the macOS font (copied into `~/Library/Fonts` by `install`) is the single
+copy Linux reaches through `~/.fonts` too. Because `main/.vimrc` is stowed to `~/.vimrc`, `configs.py` skips
 writing `~/.vimrc` / `init.vim` when they are symlinks - otherwise it would
 write through into the repo.
 
