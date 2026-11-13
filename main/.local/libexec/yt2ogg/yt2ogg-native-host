@@ -2,9 +2,8 @@
 """Native messaging host for the yt2ogg Chrome extension: the popup's way to
 yt2ogg and tags.conf, which a browser cannot reach itself.
 
-  guess     the artist and title yt2ogg would propose for a video, and what
-            tags.conf already says about them, with the words it uses
-  known     what tags.conf says about an artist and title, after an edit
+  known     what tags.conf says about an artist and title, and the words
+            it uses - the popup guesses those from the page itself
   download  add the popup's answers to tags.conf, then run yt2ogg with the
             confirmed artist and title. Replies twice: once started, and
             once done, for the extension's notification - over a port the
@@ -114,24 +113,6 @@ def known(mt, artist, title):
             "vocab": vocab}
 
 
-def guess(msg):
-    url = video_url(msg)
-    if not url:
-        return {"ok": False, "error": "not a video"}
-    try:
-        p = subprocess.run([str(YT2OGG), "--guess", url], capture_output=True,
-                           text=True, timeout=90, env=env())
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": "yt-dlp took too long"}
-    if p.returncode != 0 or "\t" not in p.stdout:
-        lines = (p.stderr or p.stdout).strip().splitlines()
-        return {"ok": False, "error": lines[-1] if lines else "yt2ogg --guess failed"}
-    artist, _, title = p.stdout.splitlines()[0].partition("\t")
-    out = known(mpcc_tag(), artist, title)
-    out.update(artist=artist, title=title)
-    return out
-
-
 def download(msg):
     url = video_url(msg)
     artist, title = clean(msg.get("artist")), clean(msg.get("title"))
@@ -193,9 +174,7 @@ def main():
     if not isinstance(msg, dict):
         msg = {}
     action = msg.get("action")
-    if action == "guess":
-        reply(guess(msg))
-    elif action == "known":
+    if action == "known":
         reply(known(mpcc_tag(), clean(msg.get("artist")), clean(msg.get("title"))))
     elif action == "download":
         reply(download(msg))

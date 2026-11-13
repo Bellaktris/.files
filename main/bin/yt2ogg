@@ -18,9 +18,8 @@
 # Usage: ./yt2ogg [-y] <url> [url...]
 #        -y                              take the guesses, don't prompt
 #        --artist A --title T <url>      use these instead (one url)
-#        --guess <url>                   print the guesses, tab-separated
-#        --register                      let the yt2ogg Chrome extension
-#                                        #   (~/.local/share/yt2ogg) call this
+#        --register                      let the Chrome extension in
+#                                          ~/.local/share/yt2ogg call this
 #        BROWSER=safari ./yt2ogg <url>   # cookie source (default: chrome,
 #                                        #   firefox on Linux)
 #        OUTDIR=~/Music  ./yt2ogg <url>  # destination  (default: ~/Dropbox/Music)
@@ -37,7 +36,7 @@ else
   BROWSER="${BROWSER:-firefox}"
 fi
 
-usage() { sed -n '2,27p' "$0" | cut -c3-; }
+usage() { sed -n '2,26p' "$0" | cut -c3-; }
 
 # Must match the "key" in the extension's manifest.json, which fixes it.
 EXTENSION_ID=bchcleiiilffiilaocpnkmmkghebmcbc
@@ -67,11 +66,10 @@ JSON
   echo "load ~/.local/share/yt2ogg/extension unpacked in chrome://extensions"
 }
 
-assume_yes=0 guess=0 set_artist='' set_title='' override=0
+assume_yes=0 set_artist='' set_title='' override=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes) assume_yes=1; shift ;;
-    --guess) guess=1; shift ;;
     --artist) set_artist="${2:?--artist needs a value}"; override=1; shift 2 ;;
     --title) set_title="${2:?--title needs a value}"; override=1; shift 2 ;;
     --register) register; exit 0 ;;
@@ -176,11 +174,6 @@ common=(
   --replace-in-metadata track "$STRIP" ''
   --replace-in-metadata track "$STRIP" ''
 )
-
-if [ "$guess" -eq 1 ]; then
-  exec yt-dlp "${common[@]}" --skip-download --no-playlist --quiet --no-warnings \
-    --print '%(artist,uploader)s	%(track,title)s' "$@"
-fi
 
 mkdir -p "$OUTDIR"
 

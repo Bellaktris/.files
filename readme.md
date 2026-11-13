@@ -72,8 +72,9 @@ Their dependencies are not installed by `install`. Each documents itself in
 the comment block at its top.
 
 `yt2ogg` also has a Chrome extension (`~/.local/share/yt2ogg/extension`): its
-toolbar popup on a YouTube video shows the guessed artist and title and the
-`tags.conf` fields still missing, then saves the track through a native host
+toolbar popup on a YouTube video fills in the artist and title from the
+video's Music card, if it has one, asks for the `tags.conf` fields still
+missing, then saves the track through a native host
 (`~/.local/libexec/yt2ogg`). Run `yt2ogg --register` once, then load the
 extension unpacked in `chrome://extensions`.
 

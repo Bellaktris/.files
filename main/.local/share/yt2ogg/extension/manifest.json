@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "yt2ogg",
-    "version": "2",
+    "version": "3",
     "description": "Saves the YouTube video in this tab to the music library with yt2ogg, after confirming its artist, title and tags.conf fields.",
     "icons": {
         "16": "images/icon16.png",
@@ -13,7 +13,7 @@
     "permissions": [
         "nativeMessaging",
         "activeTab",
-        "notifications"
+        "scripting"
     ],
     "background": {
         "service_worker": "background.js"

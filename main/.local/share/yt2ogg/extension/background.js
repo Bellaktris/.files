@@ -1,13 +1,11 @@
 // Holds the native host's port for as long as a download runs - an open
-// native port keeps this worker alive - and says how it ended. The popup
-// cannot: it closes as soon as the download starts.
+// native port keeps this worker alive - and shows how it ended on the badge,
+// with the track or the error in the tooltip. The popup cannot: it closes as
+// soon as the download starts, and clears the badge when next opened.
 
 const HOST = "yt2ogg";
 
-// The badge too, since macOS may keep the notification from showing; the
-// popup clears it when next opened.
-function notify(title, message, ok) {
-    chrome.notifications.create({ type: "basic", iconUrl: "images/icon128.png", title, message });
+function done(title, message, ok) {
     chrome.action.setBadgeBackgroundColor({ color: ok ? "#1e8e3e" : "#d70015" });
     chrome.action.setBadgeText({ text: ok ? "\u2713" : "!" });
     chrome.action.setTitle({ title: title + ": " + message });
@@ -25,8 +23,8 @@ chrome.runtime.onMessage.addListener((m, sender, respond) => {
             return;
         }
         if (!r.done) return;
-        if (r.ok) notify("Saved", r.name, true);
-        else notify("Not saved: " + r.name, r.error + (r.log ? "\n" + r.log : ""), false);
+        if (r.ok) done("Saved", r.name, true);
+        else done("Not saved: " + r.name, r.error + (r.log ? "\n" + r.log : ""), false);
         port.disconnect();
     });
     port.onDisconnect.addListener(() => {

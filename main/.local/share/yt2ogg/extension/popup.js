@@ -1,7 +1,10 @@
-// The popup is the whole extension: it reads the tab's video, asks the
-// native host what yt2ogg would call it and what tags.conf already says,
-// and hands what was confirmed to the service worker, which runs the
-// download and reports it by notification, so the popup may close at once.
+// The popup takes the artist and title from the video's music card in the
+// tab, asks the host what tags.conf already says, and hands what was
+// confirmed to the service worker, which runs the download and shows how it
+// ended on the badge, so the popup may close at once.
+//
+// From the page, not from yt-dlp: the page has them already, and yt-dlp
+// takes 20-30 seconds through the chain to fetch them again.
 
 const HOST = "yt2ogg";
 const FIELDS = ["lang", "genre", "mood"];
@@ -32,6 +35,18 @@ function videoId(raw) {
     if (u.pathname === "/watch") return u.searchParams.get("v");
     const m = u.pathname.match(/^\/(?:shorts|live)\/([\w-]{11})/);
     return m && m[1];
+}
+
+// Runs in the tab: the description's "Music" card, where yt-dlp's artist and
+// track come from too. Taken as it is or not at all - a video without one
+// leaves the fields for you, rather than to a guess from its title.
+function readCard() {
+    const card = document.querySelector("ytd-watch-metadata yt-video-attribute-view-model");
+    // Today's class names, and the ones YouTube used before them.
+    const part = (name) => card?.querySelector(
+        `.ytVideoAttributeViewModel${name}, .yt-video-attribute-view-model__${name.toLowerCase()}`)
+        ?.textContent.trim() || "";
+    return { artist: part("Subtitle"), title: part("Title") };
 }
 
 // A field tags.conf has a value for is shown, not asked: it is edited there.
@@ -97,17 +112,26 @@ async function main() {
         say("Open a YouTube video to save it.");
         return;
     }
-    const info = await ask({ action: "guess", id });
+    let card;
+    try {
+        [{ result: card }] = await chrome.scripting.executeScript({
+            target: { tabId: tab.id }, func: readCard });
+    } catch (e) {
+        say("Could not read the page: " + e.message, true);
+        return;
+    }
+    $("artist").value = card.artist;
+    $("title").value = card.title;
+    const info = await ask({ action: "known", artist: card.artist, title: card.title });
     if (!info.ok) {
         say(info.error, true);
         return;
     }
-    $("artist").value = info.artist;
-    $("title").value = info.title;
     renderFields(info);
     $("status").hidden = true;
     $("form").hidden = false;
-    // For videos titled "Song - Artist", the other way round from the guess.
+    if (!card.artist) $("artist").focus();
+    // For filling them in from a title such as "Song - Artist".
     $("swap").addEventListener("click", () => {
         [$("artist").value, $("title").value] = [$("title").value, $("artist").value];
         refresh();
@@ -119,8 +143,8 @@ async function main() {
         const msg = { action: "download", id, artist: $("artist").value, title: $("title").value };
         for (const f of FIELDS) if ($(f)) msg[f] = $(f).value;
         $("form").querySelector("button").disabled = true;
-        // Through the service worker, which outlives the popup and posts
-        // the notification when the download ends.
+        // Through the service worker, which outlives the popup and marks
+        // the badge when the download ends.
         const r = await chrome.runtime.sendMessage({ download: msg })
             .catch((err) => ({ ok: false, error: err.message }));
         if (!r.ok) {
@@ -129,7 +153,7 @@ async function main() {
             return;
         }
         $("form").hidden = true;
-        say("Downloading - a notification will say when it is saved.");
+        say("Downloading - the badge will say when it is saved.");
         setTimeout(() => window.close(), 1500);
     });
 }
