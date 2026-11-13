@@ -4,10 +4,10 @@
     "version": "2",
     "description": "Saves the YouTube video in this tab to the music library with yt2ogg, after confirming its artist, title and tags.conf fields.",
     "icons": {
-        "16": "icons/icon16.png",
-        "32": "icons/icon32.png",
-        "48": "icons/icon48.png",
-        "128": "icons/icon128.png"
+        "16": "images/icon16.png",
+        "32": "images/icon32.png",
+        "48": "images/icon48.png",
+        "128": "images/icon128.png"
     },
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAozHFzOtQYSK08iuosZwuhs5QqpWl+NZ0AOnzj2fOA69uKXRF9KaIPmn8GOU8ETGWteRPVhSgFnBnhg8WD60F5YsNW4+jK4D0pzw+Sv/+0zKQhDOBOplz4qCXWsvKvH9LoOFzmCODb66GX7C1ja851KTcGCNcJohhR33/XxigQZ/JEikeNRekvhcvl2CIH2ziXFdDER2/kMeqECTs+bF6PY9rX9t32JiXq6BQVxPY6FDRIB1cfEGnr0nOy0zV+QN/TSJSSaxfb8ilTkL/YJuIo8dqHUAEfKznZ7tQ9o073ccpNq3KM9/MMdLqjx57by8jjZFPK8VTKspkAmXHkU56ewIDAQAB",
     "permissions": [
@@ -21,8 +21,8 @@
     "action": {
         "default_title": "Save to the music library",
         "default_icon": {
-            "16": "icons/icon16.png",
-            "32": "icons/icon32.png"
+            "16": "images/icon16.png",
+            "32": "images/icon32.png"
         },
         "default_popup": "popup.html"
     }

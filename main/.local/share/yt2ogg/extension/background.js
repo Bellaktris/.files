@@ -7,7 +7,7 @@ const HOST = "yt2ogg";
 // The badge too, since macOS may keep the notification from showing; the
 // popup clears it when next opened.
 function notify(title, message, ok) {
-    chrome.notifications.create({ type: "basic", iconUrl: "icons/icon128.png", title, message });
+    chrome.notifications.create({ type: "basic", iconUrl: "images/icon128.png", title, message });
     chrome.action.setBadgeBackgroundColor({ color: ok ? "#1e8e3e" : "#d70015" });
     chrome.action.setBadgeText({ text: ok ? "\u2713" : "!" });
     chrome.action.setTitle({ title: title + ": " + message });
