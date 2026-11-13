@@ -17,6 +17,10 @@
 #
 # Usage: ./yt2ogg [-y] <url> [url...]
 #        -y                              take the guesses, don't prompt
+#        --artist A --title T <url>      use these instead (one url)
+#        --guess <url>                   print the guesses, tab-separated
+#        --register                      let the yt2ogg Chrome extension
+#                                        #   (~/.local/share/yt2ogg) call this
 #        BROWSER=safari ./yt2ogg <url>   # cookie source (default: chrome,
 #                                        #   firefox on Linux)
 #        OUTDIR=~/Music  ./yt2ogg <url>  # destination  (default: ~/Dropbox/Music)
@@ -33,12 +37,44 @@ else
   BROWSER="${BROWSER:-firefox}"
 fi
 
-usage() { sed -n '2,23p' "$0" | cut -c3-; }
+usage() { sed -n '2,27p' "$0" | cut -c3-; }
 
-assume_yes=0
+# Must match the "key" in the extension's manifest.json, which fixes it.
+EXTENSION_ID=bchcleiiilffiilaocpnkmmkghebmcbc
+if [ "$(uname)" = Darwin ]; then
+  NATIVE_HOST_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
+else
+  NATIVE_HOST_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/google-chrome/NativeMessagingHosts"
+fi
+
+# The host sits in this tree's .local/libexec, found from the real file so
+# the link in ~/bin works too. Chrome starts only what this names, and only
+# for our extension.
+register() {
+  local host
+  host="$(cd "$(dirname "$(realpath "$0")")/../.local/libexec/yt2ogg" && pwd)/yt2ogg-native-host"
+  mkdir -p "$NATIVE_HOST_DIR"
+  cat >"$NATIVE_HOST_DIR/yt2ogg.json" <<JSON
+{
+    "name": "yt2ogg",
+    "description": "yt2ogg, for its Chrome extension",
+    "path": "$host",
+    "type": "stdio",
+    "allowed_origins": ["chrome-extension://$EXTENSION_ID/"]
+}
+JSON
+  echo "registered $host"
+  echo "load ~/.local/share/yt2ogg/extension unpacked in chrome://extensions"
+}
+
+assume_yes=0 guess=0 set_artist='' set_title='' override=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -y|--yes) assume_yes=1; shift ;;
+    --guess) guess=1; shift ;;
+    --artist) set_artist="${2:?--artist needs a value}"; override=1; shift 2 ;;
+    --title) set_title="${2:?--title needs a value}"; override=1; shift 2 ;;
+    --register) register; exit 0 ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     -*) echo "yt2ogg: unknown option: $1" >&2; exit 1 ;;
@@ -50,6 +86,11 @@ if [ $# -eq 0 ]; then
   usage
   exit 1
 fi
+if [ "$override" -eq 1 ] && { [ $# -gt 1 ] || [ -z "$set_artist" ] || [ -z "$set_title" ]; }; then
+  echo "yt2ogg: --artist and --title go together, with one url" >&2
+  exit 1
+fi
+[ "$override" -eq 0 ] || assume_yes=1
 
 # Prompting needs a controlling terminal; run as if -y when there isn't one.
 # Tested in a subshell because a failed exec redirection kills a non-interactive
@@ -120,11 +161,6 @@ if [ "${PROXY:-}" != none ] && [ -r "$vpnenv" ]; then
   proxy=(--proxy "socks5h://$phost:$pport")
 fi
 
-mkdir -p "$OUTDIR"
-
-LIST="$(mktemp)"
-trap 'rm -f "$LIST"' EXIT
-
 # Trailing "(Lyric Video)", "(Live)", "[HD]" and friends are dropped from the
 # track name; a group naming a collaborator is kept. Applied repeatedly so
 # stacked suffixes like "Song (To Fall In Love) (Lyric Video)" fully reduce.
@@ -132,15 +168,29 @@ STRIP='(?i)\s*[\(\[](?![^)\]]*\b(?:feat|ft|with)\b)[^)\]]*[\)\]]\s*$'
 
 # Cookies are required: without them YouTube's bot check 403s the media URLs
 # even though format listing succeeds.
+common=(
+  --cookies-from-browser "$BROWSER"
+  ${proxy[@]+"${proxy[@]}"}
+  --parse-metadata 'title:(?P<artist>.+?) - (?P<track>.+)'
+  --replace-in-metadata track "$STRIP" ''
+  --replace-in-metadata track "$STRIP" ''
+  --replace-in-metadata track "$STRIP" ''
+)
+
+if [ "$guess" -eq 1 ]; then
+  exec yt-dlp "${common[@]}" --skip-download --no-playlist --quiet --no-warnings \
+    --print '%(artist,uploader)s	%(track,title)s' "$@"
+fi
+
+mkdir -p "$OUTDIR"
+
+LIST="$(mktemp)"
+trap 'rm -f "$LIST"' EXIT
+
 if ! yt-dlp \
   --format 'bestaudio[acodec^=opus]' \
-  --cookies-from-browser "$BROWSER" \
-  ${proxy[@]+"${proxy[@]}"} \
+  "${common[@]}" \
   --remux-video ogg \
-  --parse-metadata 'title:(?P<artist>.+?) - (?P<track>.+)' \
-  --replace-in-metadata track "$STRIP" '' \
-  --replace-in-metadata track "$STRIP" '' \
-  --replace-in-metadata track "$STRIP" '' \
   --parse-metadata '%(artist,uploader)s:%(meta_artist)s' \
   --parse-metadata '%(track,title)s:%(meta_title)s' \
   --embed-metadata \
@@ -172,6 +222,9 @@ while IFS= read -r f; do
     -show_entries stream_tags=artist -of default=nw=1:nk=1 "$f")
   title=$(ffprobe -v error -select_streams a:0 \
     -show_entries stream_tags=title -of default=nw=1:nk=1 "$f")
+  if [ "$override" -eq 1 ]; then
+    artist="$set_artist" title="$set_title"
+  fi
   if [ "$codec" = "opus" ]; then
     if [ "$assume_yes" -eq 0 ]; then
       printf '%s\n' "$(basename "$f")" >/dev/tty

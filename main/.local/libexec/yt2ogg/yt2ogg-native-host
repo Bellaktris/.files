@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+"""Native messaging host for the yt2ogg Chrome extension: the popup's way to
+yt2ogg and tags.conf, which a browser cannot reach itself.
+
+  guess     the artist and title yt2ogg would propose for a video, and what
+            tags.conf already says about them, with the words it uses
+  known     what tags.conf says about an artist and title, after an edit
+  download  add the popup's answers to tags.conf, then run yt2ogg with the
+            confirmed artist and title. Replies twice: once started, and
+            once done, for the extension's notification - over a port the
+            service worker holds open, which keeps this running meanwhile.
+            yt2ogg runs in a session of its own, so a browser quitting
+            mid-download takes this with it but not the download; the log
+            keeps its output either way
+
+SECURITY: Chrome starts this only for the extension ID in the host manifest
+'yt2ogg --register' writes. It still checks the caller, accepts only these
+actions, rebuilds the video URL from an ID it validates, and passes every
+value as an argument, never through a shell.
+"""
+
+import importlib.machinery
+import importlib.util
+import json
+import os
+import pathlib
+import re
+import struct
+import subprocess
+import sys
+import unicodedata
+
+# This file sits in main/.local/libexec/yt2ogg; yt2ogg and mpcc-tag in
+# main/bin. Found from the real file, so the stowed link works too.
+HERE = pathlib.Path(__file__).resolve().parent
+BIN = HERE.parent.parent.parent / "bin"
+YT2OGG = BIN / "yt2ogg"
+LOG = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local" / "state")
+                   ) / "yt2ogg" / "extension.log"
+
+# Must match EXTENSION_ID in yt2ogg, which the manifest's key fixes.
+ORIGIN = "chrome-extension://bchcleiiilffiilaocpnkmmkghebmcbc/"
+
+# A browser started from the Dock has launchd's PATH, without Homebrew's
+# yt-dlp and ffmpeg.
+PATH_EXTRA = ["/opt/homebrew/bin", "/usr/local/bin"]
+
+VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+FIELDS = ("lang", "genre", "mood")
+
+def mpcc_tag():
+    """mpcc-tag, as a module, for its reading and editing of tags.conf - one
+    copy of each. Importing it runs nothing: main() runs only as __main__."""
+    loader = importlib.machinery.SourceFileLoader("mpcc_tag", str(BIN / "mpcc-tag"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def env():
+    e = dict(os.environ)
+    e["PATH"] = os.pathsep.join(PATH_EXTRA + [e.get("PATH", "/usr/bin:/bin")])
+    return e
+
+
+def read_message():
+    head = sys.stdin.buffer.read(4)
+    if len(head) < 4:
+        return None
+    (size,) = struct.unpack("=I", head)
+    return json.loads(sys.stdin.buffer.read(size))
+
+
+def reply(obj):
+    body = json.dumps(obj).encode()
+    sys.stdout.buffer.write(struct.pack("=I", len(body)) + body)
+    sys.stdout.buffer.flush()
+
+
+def video_url(msg):
+    vid = msg.get("id")
+    if not isinstance(vid, str) or not VIDEO_ID.match(vid):
+        return None
+    return "https://www.youtube.com/watch?v=" + vid
+
+
+def clean(value):
+    """A tag value as it may reach a filename and tags.conf: one line, no
+    tabs, which tags.conf separates fields with."""
+    if not isinstance(value, str):
+        return ""
+    value = unicodedata.normalize("NFC", " ".join(value.split()))
+    return value[:200]
+
+
+def song_key(artist, title):
+    # As yt2ogg names the file: a slash would read as a path separator.
+    return ("%s — %s" % (artist, title)).replace("/", "⧸")
+
+
+def known(mt, artist, title):
+    """What tags.conf has for this artist and song, and the words in use."""
+    conf = mt.music_dir() / "tags.conf"
+    try:
+        artists, songs, _ = mt.parse_conf(conf)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": "tags.conf: %s" % exc}
+    have = dict(artists.get(mt.nfc(artist), {}))
+    have.update(songs.get(mt.nfc(song_key(artist, title)), {}))
+    vocab = {f: sorted({v for table in (artists, songs) for x in table.values()
+                        for v in x.get(f, [])}) for f in FIELDS}
+    return {"ok": True, "have": {f: have[f] for f in FIELDS if f in have},
+            "vocab": vocab}
+
+
+def guess(msg):
+    url = video_url(msg)
+    if not url:
+        return {"ok": False, "error": "not a video"}
+    try:
+        p = subprocess.run([str(YT2OGG), "--guess", url], capture_output=True,
+                           text=True, timeout=90, env=env())
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "yt-dlp took too long"}
+    if p.returncode != 0 or "\t" not in p.stdout:
+        lines = (p.stderr or p.stdout).strip().splitlines()
+        return {"ok": False, "error": lines[-1] if lines else "yt2ogg --guess failed"}
+    artist, _, title = p.stdout.splitlines()[0].partition("\t")
+    out = known(mpcc_tag(), artist, title)
+    out.update(artist=artist, title=title)
+    return out
+
+
+def download(msg):
+    url = video_url(msg)
+    artist, title = clean(msg.get("artist")), clean(msg.get("title"))
+    if not url or not artist or not title:
+        return {"ok": False, "error": "need a video, an artist and a title"}
+    mt = mpcc_tag()
+    conf = mt.music_dir() / "tags.conf"
+    try:
+        artists, songs, _ = mt.parse_conf(conf)
+        have = dict(artists.get(mt.nfc(artist), {}))
+        have.update(songs.get(mt.nfc(song_key(artist, title)), {}))
+        # Only fields tags.conf has nothing on, as mpcc-tag -a asks: an
+        # existing entry is edited in tags.conf, not from here.
+        answers = {}
+        for field, section in mt.ASKED:
+            values = [clean(v) for v in str(msg.get(field) or "").split(",")]
+            values = [v for v in values if v and "=" not in v]
+            if values and field not in have:
+                answers.setdefault(section, {})[field] = values
+        if answers:
+            keys = {"artist": mt.nfc(artist), "song": mt.nfc(song_key(artist, title))}
+            lines = conf.read_text().splitlines()
+            for section, fields in answers.items():
+                mt.add_fields(lines, section, keys[section], fields)
+            tmp = conf.with_name(conf.name + ".tmp")
+            tmp.write_text("\n".join(lines) + "\n")
+            tmp.replace(conf)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": "tags.conf: %s" % exc}
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG, "w") as log:
+        proc = subprocess.Popen([str(YT2OGG), "--artist", artist, "--title", title, url],
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                env=env(), start_new_session=True)
+    reply({"ok": True})
+    rc = proc.wait()
+    name = "%s — %s" % (artist, title)
+    if rc == 0:
+        return {"done": True, "ok": True, "name": name}
+    try:
+        lines = [l for l in LOG.read_text().splitlines() if l.strip()]
+    except OSError:
+        lines = []
+    # yt-dlp's own error says what went wrong; yt2ogg's only that it did.
+    why = next((l for l in reversed(lines) if l.startswith("ERROR")),
+               next((l for l in reversed(lines) if l.startswith("yt2ogg:")),
+                    lines[-1] if lines else "yt2ogg failed"))
+    return {"done": True, "ok": False, "name": name, "error": why, "log": str(LOG)}
+
+
+def main():
+    if ORIGIN not in sys.argv[1:]:
+        reply({"ok": False, "error": "unknown caller"})
+        return
+    try:
+        msg = read_message()
+    except ValueError:
+        msg = None
+    if not isinstance(msg, dict):
+        msg = {}
+    action = msg.get("action")
+    if action == "guess":
+        reply(guess(msg))
+    elif action == "known":
+        reply(known(mpcc_tag(), clean(msg.get("artist")), clean(msg.get("title"))))
+    elif action == "download":
+        reply(download(msg))
+    else:
+        reply({"ok": False, "error": "unknown action"})
+
+
+if __name__ == "__main__":
+    main()

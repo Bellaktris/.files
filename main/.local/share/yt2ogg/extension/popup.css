@@ -1,0 +1,25 @@
+:root { color-scheme: light dark; --bg: #fff; --fg: #1d1d1f; --muted: #6e6e73; --box: #f2f2f4;
+        --accent: #0066cc; --bad: #d70015; }
+@media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1c1e; --fg: #f2f2f7; --muted: #a1a1a6; --box: #2c2c2e;
+            --accent: #4da3ff; --bad: #ff6961; }
+}
+body { margin: 0; padding: 12px; width: 340px; background: var(--bg); color: var(--fg);
+       font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; }
+p { margin: 0 0 8px; color: var(--muted); }
+p.bad { color: var(--bad); }
+label { display: block; margin: 0 0 8px; color: var(--muted); }
+input { display: block; box-sizing: border-box; width: 100%; margin-top: 2px; padding: 5px 7px;
+        font: inherit; color: var(--fg); background: var(--box); border: 1px solid transparent;
+        border-radius: 6px; }
+input:focus { outline: none; border-color: var(--accent); }
+.known { color: var(--fg); }
+.chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.chip { padding: 1px 6px; border-radius: 9px; background: var(--box); color: var(--muted);
+        cursor: pointer; font-size: 11px; user-select: none; }
+.chip.on { background: var(--accent); color: #fff; }
+button { font: inherit; padding: 6px 14px; border-radius: 8px; cursor: pointer;
+         border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+button:disabled { opacity: 0.5; cursor: default; }
+.swap { display: block; margin: -4px 0 4px auto; padding: 0 8px; background: var(--box);
+        border-color: transparent; color: var(--fg); }
