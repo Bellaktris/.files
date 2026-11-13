@@ -8,6 +8,9 @@ and do not churn through Dropbox.
 
   mpcc-tag                 apply to every .ogg in the music directory
   mpcc-tag FILE...         apply to these files only (yt2ogg uses this)
+  mpcc-tag -a FILE...      first ask for the fields tags.conf has nothing
+                           on - lang for a new artist, genre and mood for a
+                           new song - and add the answers to it
   mpcc-tag -n              say what would change, write nothing
   mpcc-tag -c CONF         read a different map
 
@@ -122,8 +125,66 @@ def wanted(path, artists, songs, current):
     return {FIELD_TAGS.get(n, n.upper()): v for n, v in fields.items()}
 
 
+# What --ask asks for, and where tags.conf keeps it: the language once per
+# artist, genre and mood per song.
+ASKED = (("lang", "artist"), ("genre", "song"), ("mood", "song"))
+
+
+def ask_missing(path, conf, artists, songs, current, tty_in, tty):
+    """Prompt on the terminal for each asked field neither the artist's nor
+    the song's line has, offering the words already in use, and add the
+    answers to tags.conf. Empty input skips a field. True if it wrote."""
+    artist = nfc(next((v for k, v in current if k == "ARTIST"), ""))
+    keys = {"artist": artist, "song": nfc(path.stem)}
+    have = dict(artists.get(artist, {}))
+    have.update(songs.get(keys["song"], {}))
+    answers, asked = {}, False
+    for field, section in ASKED:
+        if field in have or not keys[section]:
+            continue
+        if not asked:
+            print(f"  {path.name}", file=tty, flush=True)
+            asked = True
+        used = sorted({v for table in (artists, songs) for f in table.values()
+                       for v in f.get(field, [])})
+        print(f"      {field}: {' '.join(used)}", file=tty)
+        print(f"      {field} = ", end="", file=tty, flush=True)
+        line = tty_in.readline()
+        values = [v.strip() for v in line.split(",") if v.strip()]
+        if values:
+            answers.setdefault(section, {})[field] = values
+    if not answers:
+        return False
+    lines = conf.read_text().splitlines()
+    for section, fields in answers.items():
+        add_fields(lines, section, keys[section], fields)
+    tmp = conf.with_name(conf.name + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    tmp.replace(conf)
+    return True
+
+
+def add_fields(lines, section, key, fields):
+    """Extend KEY's line in [SECTION] with FIELDS, or add one for it where
+    the section's order puts it."""
+    text = "\t".join(f"{n}={', '.join(v)}" for n, v in fields.items())
+    start = next(i for i, l in enumerate(lines) if l.strip().lower() == f"[{section}]")
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].strip().startswith("[")), len(lines))
+    entries = [i for i in range(start + 1, end)
+               if lines[i].strip() and not lines[i].lstrip().startswith("#")]
+    for i in entries:
+        if nfc(lines[i].split("\t")[0].strip()) == key:
+            lines[i] = lines[i].rstrip() + "\t" + text
+            return
+    after = [i for i in entries if lines[i].split("\t")[0].strip().casefold() < key.casefold()]
+    at = after[-1] + 1 if after else entries[0] if entries else start + 1
+    lines.insert(at, f"{key}\t{text}")
+
+
 def main():
     ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("-a", "--ask", action="store_true")
     ap.add_argument("-n", "--dry-run", action="store_true")
     ap.add_argument("-c", "--conf")
     ap.add_argument("-h", "--help", action="store_true")
@@ -147,6 +208,23 @@ def main():
     if not files:
         print(f"mpcc-tag: no .ogg files under {mdir}", file=sys.stderr)
         return 1
+
+    # From the terminal, not stdin: yt2ogg runs this inside a loop reading
+    # its own file list from stdin.
+    if args.ask and not args.dry_run:
+        # Two handles: a text stream cannot be opened on a terminal for both.
+        try:
+            tty_in, tty = open("/dev/tty"), open("/dev/tty", "w")
+        except OSError:
+            tty_in = tty = None
+        for path in files if tty else []:
+            try:
+                _, _, payload = oggtag.load(str(path))
+                current = oggtag.parse_comments(payload)[1]
+                if ask_missing(path, conf, artists, songs, current, tty_in, tty):
+                    artists, songs, mentioned = parse_conf(conf)
+            except (OSError, ValueError) as exc:
+                print(f"mpcc-tag: {path.name}: {exc}", file=sys.stderr)
 
     changed = skipped = failed = 0
     for path in files:

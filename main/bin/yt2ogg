@@ -8,13 +8,19 @@
 #
 # Artist and title are guessed from the video title, then confirmed one track at
 # a time; an edited value lands in both the tags and the filename. Each track
-# also gets an R128_TRACK_GAIN so players can level it against the rest.
+# also gets an R128_TRACK_GAIN so players can level it against the rest, and
+# whatever tags.conf says about it - asked for, when it says nothing yet.
+#
+# With vpnchain set up the download goes through its pinned port, the one the
+# cookie browser uses: the signed-in account should not fetch from the home
+# address what it browsed through the chain. Down, it refuses.
 #
 # Usage: ./yt2ogg [-y] <url> [url...]
 #        -y                              take the guesses, don't prompt
 #        BROWSER=safari ./yt2ogg <url>   # cookie source (default: chrome,
 #                                        #   firefox on Linux)
 #        OUTDIR=~/Music  ./yt2ogg <url>  # destination  (default: ~/Dropbox/Music)
+#        PROXY=none ./yt2ogg <url>       # skip the chain (default: its port)
 
 set -euo pipefail
 
@@ -27,7 +33,7 @@ else
   BROWSER="${BROWSER:-firefox}"
 fi
 
-usage() { sed -n '2,17p' "$0" | cut -c3-; }
+usage() { sed -n '2,23p' "$0" | cut -c3-; }
 
 assume_yes=0
 while [ $# -gt 0 ]; do
@@ -99,6 +105,21 @@ for bin in yt-dlp ffmpeg ffprobe; do
   command -v "$bin" >/dev/null || { echo "yt2ogg: $bin not found" >&2; exit 1; }
 done
 
+proxy=()
+vpnenv="${XDG_CONFIG_HOME:-$HOME/.config}/vpnchain/env"
+if [ "${PROXY:-}" != none ] && [ -r "$vpnenv" ]; then
+  phost="$(sed -n 's/^PROXY_HOST=["'\'']*\([^"'\'']*\).*/\1/p' "$vpnenv")"
+  pport="$(sed -n 's/^PROXY_PORT=["'\'']*\([^"'\'']*\).*/\1/p' "$vpnenv")"
+  phost="${phost:-127.0.0.1}" pport="${pport:-1080}"
+  if ! nc -z "$phost" "$pport" 2>/dev/null; then
+    echo "yt2ogg: the chain is not listening on $phost:$pport." >&2
+    echo "  'vpnchain start', or PROXY=none to download directly." >&2
+    exit 1
+  fi
+  # socks5h: names are resolved through the chain, not by the local resolver.
+  proxy=(--proxy "socks5h://$phost:$pport")
+fi
+
 mkdir -p "$OUTDIR"
 
 LIST="$(mktemp)"
@@ -114,6 +135,7 @@ STRIP='(?i)\s*[\(\[](?![^)\]]*\b(?:feat|ft|with)\b)[^)\]]*[\)\]]\s*$'
 if ! yt-dlp \
   --format 'bestaudio[acodec^=opus]' \
   --cookies-from-browser "$BROWSER" \
+  ${proxy[@]+"${proxy[@]}"} \
   --remux-video ogg \
   --parse-metadata 'title:(?P<artist>.+?) - (?P<track>.+)' \
   --replace-in-metadata track "$STRIP" '' \
@@ -198,11 +220,14 @@ while IFS= read -r f; do
     printf 'WARN  %s  [%s] — not opus, audio was re-encoded\n' "$(basename "$f")" "$codec"
     status=1
   fi
-  # Fill in genre, mood and language from tags.conf, if it has anything to say
-  # about this artist or song. Failure is not fatal: the download is fine, the
-  # tags can be applied later with `mpcc-tag`.
+  # Fill in genre, mood and language from tags.conf, asking first for what it
+  # has nothing on when we may prompt (-a; the questions go to the terminal,
+  # not through the sed). Failure is not fatal: the download is fine, the tags
+  # can be applied later with `mpcc-tag`.
   if command -v mpcc-tag >/dev/null 2>&1; then
-    mpcc-tag "$f" | sed -n '/^ /s/^ */      /p' || true
+    askopt=()
+    [ "$assume_yes" -eq 1 ] || askopt=(-a)
+    mpcc-tag ${askopt[@]+"${askopt[@]}"} "$f" | sed -n '/^ /s/^ */      /p' || true
   fi
 
   # Match the rest of the library, which is executable. Has to come after the
