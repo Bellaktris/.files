@@ -103,7 +103,15 @@ async function refresh() {
 }
 
 async function main() {
-    // The last download's outcome has been seen.
+    // The last download's outcome, shown once: the badge only says that
+    // there is one, and is cleared here.
+    const { last } = await chrome.storage.session.get("last");
+    if (last) {
+        $("last").textContent = last.title + ": " + last.message;
+        $("last").className = last.ok ? "" : "bad";
+        $("last").hidden = false;
+        chrome.storage.session.remove("last");
+    }
     chrome.action.setBadgeText({ text: "" });
     chrome.action.setTitle({ title: "Save to the music library" });
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

@@ -37,6 +37,13 @@ YT2OGG = BIN / "yt2ogg"
 LOG = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local" / "state")
                    ) / "yt2ogg" / "extension.log"
 
+# yt-dlp's warning when its JS runtime fails YouTube's challenges - at times
+# just once, at times after a player change it does not handle yet - and the
+# formats come back empty.
+SOLVER_RE = re.compile(r"(Signature|n challenge) solving failed")
+SOLVER_FAILED = ("yt-dlp could not solve YouTube's signature challenge - "
+                 "try again, and if it keeps failing, update yt-dlp")
+
 # Must match EXTENSION_ID in yt2ogg, which the manifest's key fixes.
 ORIGIN = "chrome-extension://bchcleiiilffiilaocpnkmmkghebmcbc/"
 
@@ -157,9 +164,14 @@ def download(msg):
     except OSError:
         lines = []
     # yt-dlp's own error says what went wrong; yt2ogg's only that it did.
-    why = next((l for l in reversed(lines) if l.startswith("ERROR")),
-               next((l for l in reversed(lines) if l.startswith("yt2ogg:")),
-                    lines[-1] if lines else "yt2ogg failed"))
+    # Except when it could not solve YouTube's signature challenge: that is
+    # only a warning, and the error it leads to blames the video's formats.
+    if any(SOLVER_RE.search(l) for l in lines):
+        why = SOLVER_FAILED
+    else:
+        why = next((l for l in reversed(lines) if l.startswith("ERROR")),
+                   next((l for l in reversed(lines) if l.startswith("yt2ogg:")),
+                        lines[-1] if lines else "yt2ogg failed"))
     return {"done": True, "ok": False, "name": name, "error": why, "log": str(LOG)}
 
 

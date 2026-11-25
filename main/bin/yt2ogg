@@ -195,8 +195,10 @@ if ! yt-dlp \
 then
   echo >&2
   echo "yt2ogg: download failed." >&2
-  echo "  'Requested format is not available' means the video has no Opus" >&2
-  echo "  stream, so a lossless .ogg is impossible — only AAC is offered." >&2
+  echo "  If a 'Signature solving failed' warning came first, yt-dlp could not" >&2
+  echo "  solve YouTube's challenge and saw no audio: retry, then update yt-dlp." >&2
+  echo "  Otherwise 'Requested format is not available' means the video has" >&2
+  echo "  no Opus stream, so a lossless .ogg is impossible — only AAC is offered." >&2
   echo "  HTTP 403 usually means stale cookies: open YouTube in $BROWSER." >&2
   exit 1
 fi

@@ -8,6 +8,7 @@ body { margin: 0; padding: 12px; width: 340px; background: var(--bg); color: var
        font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; }
 p { margin: 0 0 8px; color: var(--muted); }
 p.bad { color: var(--bad); }
+#last { white-space: pre-wrap; padding-bottom: 8px; border-bottom: 1px solid var(--box); }
 label { display: block; margin: 0 0 8px; color: var(--muted); }
 input { display: block; box-sizing: border-box; width: 100%; margin-top: 2px; padding: 5px 7px;
         font: inherit; color: var(--fg); background: var(--box); border: 1px solid transparent;

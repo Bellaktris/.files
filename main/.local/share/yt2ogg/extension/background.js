@@ -1,7 +1,8 @@
 // Holds the native host's port for as long as a download runs - an open
 // native port keeps this worker alive - and shows how it ended on the badge,
 // with the track or the error in the tooltip. The popup cannot: it closes as
-// soon as the download starts, and clears the badge when next opened.
+// soon as the download starts. The outcome is also kept in session storage
+// for the popup to show when next opened, since opening it clears the badge.
 
 const HOST = "yt2ogg";
 
@@ -9,6 +10,7 @@ function done(title, message, ok) {
     chrome.action.setBadgeBackgroundColor({ color: ok ? "#1e8e3e" : "#d70015" });
     chrome.action.setBadgeText({ text: ok ? "\u2713" : "!" });
     chrome.action.setTitle({ title: title + ": " + message });
+    chrome.storage.session.set({ last: { title, message, ok } });
 }
 
 chrome.runtime.onMessage.addListener((m, sender, respond) => {
